@@ -1,0 +1,30 @@
+{
+  "index": "Overview",
+  "getting-started": "Getting Started",
+  "-- SOP": {
+    "type": "separator",
+    "title": "SOP"
+  },
+  "rules": "Rules & Standards",
+  "staff": "Our Staff",
+  "events": "Events",
+  "-- Tactics": {
+    "type": "separator",
+    "title": "Tactics"
+  },
+  "infantry-core": "Infantry Core",
+  "jtac": "JTAC",
+  "-- Equipment": {
+    "type": "separator",
+    "title": "Equipment Guides"
+  },
+  "launchers": "Anti Tank/Air Launchers",
+  "60mmGuide": "60mm Mortar Guide",
+  "vector": "Vector Guide",
+  "-- Radios": {
+    "type": "separator",
+    "title": "Radios and Communication"
+  },
+  "basic-radios-comms": "Basic Radio Comms",
+  "advanced-radios-comms": "Advanced Radio Comms"
+}

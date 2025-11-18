@@ -1,0 +1,45 @@
+/* Force Nextra to use dark mode colors */
+.nextra-nav-container {
+	display: none !important; /* Hide Nextra navbar completely */
+}
+
+/* Ensure dark backgrounds for all Nextra components */
+.nx-bg-white {
+	background-color: rgb(17 24 39) !important; /* dark:bg-gray-900 */
+}
+
+/* Fix sidebar backgrounds */
+aside[class*="nextra"] {
+	background-color: rgb(17 24 39) !important;
+}
+
+/* Fix TOC (table of contents) sidebar */
+nav[class*="nextra-toc"] {
+	background-color: transparent !important;
+}
+
+/* Fix any white/light backgrounds in Nextra */
+.nextra-content {
+	background-color: transparent !important;
+}
+
+/* Ensure text is visible in dark mode */
+.dark .nx-text-gray-500 {
+	color: rgb(156 163 175) !important;
+}
+
+/* Remove any light mode artifacts */
+.nx-bg-gray-50 {
+	background-color: rgb(31 41 55) !important; /* dark:bg-gray-800 */
+}
+
+/* Fix feedback/edit links styling */
+.nx-text-xs {
+	background-color: transparent !important;
+}
+
+/* Ensure search bar fits your theme */
+.nextra-search input {
+	background-color: rgb(31 41 55) !important;
+	border-color: rgb(55 65 81) !important;
+}

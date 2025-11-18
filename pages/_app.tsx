@@ -1,5 +1,6 @@
 import "tailwindcss/tailwind.css";
 import "../styles/global.css";
+import "../styles/nextra-custom.css";
 import { SessionProvider } from "next-auth/react";
 import { MainLayout } from "../layouts/main-layout";
 import React, { useEffect, useState } from "react";
