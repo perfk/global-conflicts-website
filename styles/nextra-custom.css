@@ -3,6 +3,26 @@
 	display: none !important; /* Hide Nextra navbar completely */
 }
 
+/* Hide the "sop" folder title at top of sidebar */
+.nextra-sidebar-container > div > button:first-child,
+aside nav > div > button:first-child {
+	display: none !important;
+}
+
+/* 1. Add spacing between navbar and main content */
+main.nextra-content {
+	padding-top: 2rem !important; /* Add spacing from top */
+}
+
+
+/* Push breadcrumb down to match sidebars */
+.nextra-breadcrumb,
+nav[aria-label="breadcrumb"],
+.nx-breadcrumbs {
+	margin-top: 2rem !important;
+	padding-top: 0 !important;
+}
+
 /* Ensure dark backgrounds for all Nextra components */
 .nx-bg-white {
 	background-color: rgb(17 24 39) !important; /* dark:bg-gray-900 */
@@ -13,9 +33,50 @@ aside[class*="nextra"] {
 	background-color: rgb(17 24 39) !important;
 }
 
-/* Fix TOC (table of contents) sidebar */
+/* 2. Remove box around TOC sidebar and style "Back to top" link */
 nav[class*="nextra-toc"] {
 	background-color: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+}
+
+/* Remove any background or border from TOC wrapper */
+.nextra-toc-container,
+nav.nextra-toc,
+aside nav {
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+}
+
+/* Style the "Back to top" link to match your link colors */
+.nextra-toc a,
+nav[class*="nextra-toc"] a {
+	color: rgb(96 165 250) !important; /* blue-400 to match your links */
+	background: transparent !important;
+	border: none !important;
+	text-decoration: none !important;
+}
+
+.nextra-toc a:hover,
+nav[class*="nextra-toc"] a:hover {
+	color: rgb(147 197 253) !important; /* blue-300 on hover */
+}
+
+/* 3. Remove box around sidebar toggle button */
+button[class*="sidebar-toggle"],
+.nextra-sidebar-toggle,
+button[aria-label*="Toggle"],
+button[title*="sidebar"] {
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+	padding: 0.5rem !important;
+}
+
+button[class*="sidebar-toggle"]:hover,
+.nextra-sidebar-toggle:hover {
+	background: rgba(55, 65, 81, 0.5) !important; /* subtle hover effect */
 }
 
 /* Fix any white/light backgrounds in Nextra */
@@ -42,4 +103,103 @@ nav[class*="nextra-toc"] {
 .nextra-search input {
 	background-color: rgb(31 41 55) !important;
 	border-color: rgb(55 65 81) !important;
+}
+
+/* Remove any boxes/borders from right sidebar area */
+.nx-border-l,
+.nx-border-r,
+.nx-border-gray-200,
+aside[class*="right"] {
+	border: none !important;
+}
+
+/* More aggressive removal of boxes and borders */
+div[class*="border"],
+aside div[class*="border"],
+nav div[class*="border"] {
+	border: none !important;
+	box-shadow: none !important;
+	background: transparent !important;
+}
+
+/* Remove specific Nextra border classes */
+.nx-border,
+.nx-border-gray-200,
+.nx-border-gray-300,
+.nx-rounded,
+.nx-shadow {
+	border: none !important;
+	box-shadow: none !important;
+	background: transparent !important;
+}
+
+/* Target the sidebar toggle wrapper specifically */
+div > button[aria-label*="Toggle"],
+div > button[title*="sidebar"] {
+	border: none !important;
+	box-shadow: none !important;
+}
+
+/* Remove parent container styling */
+button[aria-label*="Toggle"]:not(:only-child),
+button[title*="sidebar"]:not(:only-child) {
+	display: inline-block !important;
+}
+
+/* Aggressive border removal for all Nextra components */
+[class*="nextra"] [class*="border"],
+[class*="nx-"] [class*="border"] {
+	border: none !important;
+	border-width: 0 !important;
+	border-color: transparent !important;
+}
+
+/* Remove rounded corners that might show borders */
+[class*="nextra"] [class*="rounded"],
+[class*="nx-"] [class*="rounded"] {
+	border: none !important;
+}
+
+/* Target the specific TOC footer container */
+.nx-mt-8.nx-border-t.nx-bg-white,
+.nx-sticky.nx-bottom-0 {
+	background: transparent !important;
+	border: none !important;
+	box-shadow: none !important;
+	backdrop-filter: none !important;
+}
+
+/* Remove dark background shadow effects */
+.dark\:nx-shadow-\[0_-12px_16px_\#111\],
+.nx-shadow-\[0_-12px_16px_white\] {
+	box-shadow: none !important;
+}
+
+/* Keep the edit link and scroll to top visible but remove container styling */
+.nx-sticky .nx-text-xs {
+	background: transparent !important;
+}
+
+/* Style both the edit link and scroll to top button with same colors */
+.nx-sticky a.nx-text-xs,
+.nx-sticky button.nx-text-xs {
+	color: rgb(96 165 250) !important; /* blue-400 to match your links */
+	background: transparent !important;
+	text-decoration: none !important;
+}
+
+.nx-sticky a.nx-text-xs:hover,
+.nx-sticky button.nx-text-xs:hover {
+	color: rgb(147 197 253) !important; /* blue-300 on hover */
+}
+
+/* Make sure links are visible even if href is empty */
+.nx-sticky a[href=""] {
+	display: none !important; /* Hide empty edit links */
+}
+
+/* Ensure visible styling for valid links */
+.nx-sticky a[href]:not([href=""]) {
+	color: rgb(96 165 250) !important;
+	opacity: 1 !important;
 }

@@ -1,9 +1,9 @@
 export default {
 	logo: null, // Hide logo since you have your own navbar
 	project: {
-		link: 'https://github.com/your-org/global-conflicts-website'
+		link: 'https://github.com/Global-Conflicts-ArmA/global-conflicts-website'
 	},
-	docsRepositoryBase: 'https://github.com/your-org/global-conflicts-website/tree/main',
+	docsRepositoryBase: 'https://github.com/Global-Conflicts-ArmA/global-conflicts-website/tree/main/pages',
 	chat: {
 		link: null // Disable chat link
 	},
@@ -21,10 +21,11 @@ export default {
 		text: null // Disable Nextra footer since you have a custom one
 	},
 	feedback: {
-		content: null // Remove "Question? Give us feedback" link
+		content: 'Question? Give us feedback →',
+		labels: 'feedback'
 	},
 	editLink: {
-		text: null // Remove "Edit this page" link
+		text: 'Edit this page on GitHub'
 	},
 	head: null, // Use your existing _app.tsx head configuration
 	primaryHue: 200,

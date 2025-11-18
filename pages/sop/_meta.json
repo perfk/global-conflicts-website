@@ -1,30 +1,21 @@
 {
+  "title": "Intro",
   "index": "Overview",
   "getting-started": "Getting Started",
-  "-- SOP": {
+  "-- Community": {
     "type": "separator",
-    "title": "SOP"
+    "title": "Community Rules & Structure"
   },
-  "rules": "Rules & Standards",
-  "staff": "Our Staff",
-  "events": "Events",
-  "-- Tactics": {
+  "community-rules": "Community Rules",
+  "-- Arma": {
     "type": "separator",
-    "title": "Tactics"
+    "title": "Arma Guides"
   },
-  "infantry-core": "Infantry Core",
-  "jtac": "JTAC",
-  "-- Equipment": {
+  "arma-guides": "Arma Guides",
+  "-- Mission": {
     "type": "separator",
-    "title": "Equipment Guides"
+    "title": "Mission Making"
   },
-  "launchers": "Anti Tank/Air Launchers",
-  "60mmGuide": "60mm Mortar Guide",
-  "vector": "Vector Guide",
-  "-- Radios": {
-    "type": "separator",
-    "title": "Radios and Communication"
-  },
-  "basic-radios-comms": "Basic Radio Comms",
-  "advanced-radios-comms": "Advanced Radio Comms"
+  "mission-making": "Mission Making",
+  "how-to-use-nextra": "How to Use Nextra"
 }

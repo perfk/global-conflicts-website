@@ -1,0 +1,196 @@
+# How to Use Nextra - Quick Guide for Writers
+
+This guide explains how to add and maintain content in the `/sop` section using Nextra.
+
+## Adding a New Page
+
+### Step 1: Create the MDX File
+
+Navigate to the appropriate folder in `pages/sop/`:
+- `arma-guides/` - For Arma gameplay guides
+- `community-rules/` - For community rules and policies
+- `mission-making/` - For mission creation guides
+
+Create a new `.mdx` file with a descriptive name (use lowercase and hyphens):
+```
+pages/sop/arma-guides/my-new-guide.mdx
+```
+
+Write your content using Markdown:
+```markdown
+# My New Guide Title
+
+Introduction paragraph here.
+
+## Section 1
+
+Your content here.
+
+## Section 2
+
+More content.
+```
+
+### Step 2: Add to Navigation
+
+Open the `_meta.json` file in the **same folder** as your new file:
+```
+pages/sop/arma-guides/_meta.json
+```
+
+Add one line with your filename (without `.mdx`) and display title:
+```json
+{
+  "infantry-core": "Infantry Core",
+  "jtac": "JTAC",
+  "my-new-guide": "My New Guide Title"
+}
+```
+
+Save the file - the page will appear in the sidebar automatically.
+
+## Editing Existing Pages
+
+1. Find the `.mdx` file you want to edit
+2. Open it and make your changes
+3. Save - changes appear immediately when running locally
+
+## Organizing Navigation Order
+
+The order in `_meta.json` determines sidebar order. Example:
+
+```json
+{
+  "first-guide": "This Appears First",
+  "second-guide": "This Appears Second",
+  "third-guide": "This Appears Third"
+}
+```
+
+## Adding Sections/Separators
+
+To add a visual separator in the navigation:
+
+```json
+{
+  "guide-one": "Guide One",
+  "-- Equipment": {
+    "type": "separator",
+    "title": "Equipment Guides"
+  },
+  "equipment-guide": "Equipment Guide"
+}
+```
+
+## Markdown Features
+
+### Headings
+```markdown
+# Main Title (H1)
+## Section (H2)
+### Subsection (H3)
+```
+
+### Lists
+```markdown
+- Bullet point
+- Another point
+  - Nested point
+
+1. Numbered item
+2. Another numbered item
+```
+
+### Links
+```markdown
+[Link text](/sop/another-page)
+[External link](https://example.com)
+```
+
+### Images
+```markdown
+![Alt text](/images/my-image.png)
+```
+
+### Code Blocks
+````markdown
+```javascript
+const example = "code here";
+```
+````
+
+### Callouts/Alerts
+```markdown
+> **Note**: This is an important note
+
+> **Warning**: This is a warning
+```
+
+### Tables
+```markdown
+| Column 1 | Column 2 |
+|----------|----------|
+| Data 1   | Data 2   |
+```
+
+## Testing Your Changes Locally
+
+Make sure the dev server is running:
+```bash
+yarn dev
+```
+
+Navigate to: `http://localhost:3000/sop`
+
+Find your page in the sidebar and verify it looks correct.
+
+## Common Mistakes
+
+❌ **Don't**: Use `.md` extension
+✅ **Do**: Use `.mdx` extension
+
+❌ **Don't**: Forget to add the file to `_meta.json`
+✅ **Do**: Add it to `_meta.json` in the same folder
+
+❌ **Don't**: Use spaces in filenames
+✅ **Do**: Use hyphens: `my-guide-name.mdx`
+
+❌ **Don't**: Include `.mdx` in `_meta.json`
+✅ **Do**: Just use the filename: `"my-guide-name": "Title"`
+
+## File Structure Example
+
+```
+pages/sop/
+├── _meta.json (main navigation)
+├── index.mdx (overview page)
+├── getting-started.mdx
+├── arma-guides/
+│   ├── _meta.json (arma guides navigation)
+│   ├── infantry-core.mdx
+│   ├── jtac.mdx
+│   └── my-new-guide.mdx (your new file)
+├── community-rules/
+│   ├── _meta.json
+│   ├── staff-structure.mdx
+│   └── rules.mdx
+└── mission-making/
+    ├── _meta.json
+    └── index.mdx
+```
+
+## Quick Reference Card
+
+| Task | Steps |
+|------|-------|
+| Add new page | 1. Create `.mdx` file<br>2. Add to `_meta.json`<br>3. Write content |
+| Edit page | Open `.mdx` file and edit |
+| Change order | Rearrange entries in `_meta.json` |
+| Rename page | 1. Rename `.mdx` file<br>2. Update key in `_meta.json` |
+| Delete page | 1. Delete `.mdx` file<br>2. Remove from `_meta.json` |
+
+## Need Help?
+
+- **Nextra Documentation**: https://nextra.site/docs
+- **Markdown Guide**: https://www.markdownguide.org/basic-syntax/
+- **Ask in Discord**: #web-development channel
