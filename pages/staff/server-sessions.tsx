@@ -1,0 +1,1104 @@
+import React, { useState, useEffect } from "react";
+import Head from "next/head";
+import useSWR from "swr";
+import fetcher from "../../lib/fetcher";
+import { useSession } from "next-auth/react";
+import { CREDENTIAL } from "../../middleware/check_auth_perms";
+import { hasCredsAny } from "../../lib/credsChecker";
+import { Disclosure, Transition } from "@headlessui/react";
+import { ChevronUpIcon, RefreshIcon } from "@heroicons/react/outline";
+import moment from "moment";
+import DatePicker from "react-datepicker";
+import "react-datepicker/dist/react-datepicker.css";
+import Select from "react-select";
+import axios from "axios";
+import { toast } from "react-toastify";
+import Spinner from "../../components/spinner";
+
+interface DiscordUserOption {
+    userId: string;
+    nickname?: string;
+    displayName?: string;
+    username?: string;
+}
+
+const PAGE_SIZE = 20;
+
+const END_REASON_LABELS: Record<string, string> = {
+    server_restart: "Server Restart",
+    mission_change: "Mission Change",
+    stale: "Stale",
+    load_event: "Load Event",
+};
+
+const END_REASON_COLORS: Record<string, string> = {
+    server_restart: "badge-warning",
+    mission_change: "badge-info",
+    stale: "badge-error",
+    load_event: "badge-success",
+};
+
+function formatDuration(startedAt: string, endedAt: string | null): string {
+    if (!endedAt) return "Active";
+    const diff = moment(endedAt).diff(moment(startedAt));
+    const d = moment.duration(diff);
+    if (d.hours() > 0) return `${d.hours()}h ${d.minutes()}m`;
+    return `${d.minutes()}m`;
+}
+
+// ── Match confidence ──────────────────────────────────────────────────────────
+function matchConfidence(
+    missionString: string,
+    missionUniqueName: string | null,
+    missionLinkSource?: string
+): "high" | "medium" | "none" {
+    if (!missionUniqueName) return "none";
+    if (missionLinkSource === "manual") return "high";
+
+    const m = missionString.match(/^\w+\s+\(\d+-\d+\)\s+(.+)$/);
+    if (!m) return "medium";
+
+    const words = m[1].toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2);
+    if (words.length === 0) return "medium";
+
+    const uniqueLower = missionUniqueName.toLowerCase();
+    const hits = words.filter((w) => uniqueLower.includes(w)).length;
+    return hits / words.length >= 0.8 ? "high" : "medium";
+}
+
+function ConfidenceDot({ missionString, missionUniqueName, missionLinkSource }: {
+    missionString: string;
+    missionUniqueName: string | null;
+    missionLinkSource?: string;
+}) {
+    const level = matchConfidence(missionString, missionUniqueName, missionLinkSource);
+
+    if (level === "none") {
+        return (
+            <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full bg-red-500 shrink-0" title="No match found" />
+                <span className="text-xs text-red-400">No match</span>
+            </span>
+        );
+    }
+    if (level === "medium") {
+        return (
+            <span className="flex items-center gap-1.5 min-w-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-yellow-400 shrink-0" title="Partial match — verify manually" />
+                <span className="text-xs truncate">{missionUniqueName}</span>
+            </span>
+        );
+    }
+    return (
+        <span className="flex items-center gap-1.5 min-w-0">
+            <span className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0" title={missionLinkSource === "manual" ? "Manually linked" : "High-confidence match"} />
+            <span className="text-xs truncate">{missionUniqueName}</span>
+        </span>
+    );
+}
+
+function EndReasonBadge({ reason }: { reason: string | null }) {
+    if (!reason) {
+        return (
+            <span className="badge badge-success badge-sm gap-1">
+                <span className="animate-pulse w-1.5 h-1.5 rounded-full bg-current inline-block" />
+                Active
+            </span>
+        );
+    }
+    return (
+        <span className={`badge badge-sm ${END_REASON_COLORS[reason] ?? "badge-ghost"}`}>
+            {END_REASON_LABELS[reason] ?? reason}
+        </span>
+    );
+}
+
+// ── react-select dark-mode styles ─────────────────────────────────────────────
+function buildSelectStyles(isDark: boolean) {
+    return {
+        control: (base: any) => ({
+            ...base,
+            backgroundColor: isDark ? "#374151" : "white",
+            borderColor: isDark ? "#4B5563" : "#D1D5DB",
+        }),
+        menu: (base: any) => ({
+            ...base,
+            backgroundColor: isDark ? "#374151" : "white",
+            zIndex: 20,
+        }),
+        option: (base: any, { isFocused, isSelected }: any) => ({
+            ...base,
+            backgroundColor: isSelected
+                ? "#3B82F6"
+                : isFocused
+                ? isDark ? "#4B5563" : "#F3F4F6"
+                : isDark ? "#374151" : "white",
+            color: isSelected ? "white" : isDark ? "#F9FAFB" : "#111827",
+        }),
+        singleValue: (base: any) => ({ ...base, color: isDark ? "#F9FAFB" : "#111827" }),
+        input: (base: any) => ({ ...base, color: isDark ? "#F9FAFB" : "#111827" }),
+        placeholder: (base: any) => ({ ...base, color: isDark ? "#9CA3AF" : "#6B7280" }),
+    };
+}
+
+// ── Player mapping panel (pure display, no data fetching) ─────────────────────
+function PlayerMappingPanel({
+    players,
+    editStates,
+    savedIds,
+    discordUsers,
+    isDark,
+    onEditChange,
+    onSave,
+    saving,
+}: {
+    players: { platformId: string; playerName: string }[];
+    editStates: Record<string, DiscordUserOption | null>;
+    savedIds: Record<string, string | null>;
+    discordUsers: DiscordUserOption[];
+    isDark: boolean;
+    onEditChange: (platformId: string, val: DiscordUserOption | null) => void;
+    onSave: () => void;
+    saving: boolean;
+}) {
+    if (players.length === 0) {
+        return <p className="text-xs text-gray-500 py-2">No player data in snapshots for this session.</p>;
+    }
+
+    const dirty = players.filter(
+        (p) => (editStates[p.platformId]?.userId ?? null) !== savedIds[p.platformId]
+    );
+
+    // Unmapped first, then alphabetical — re-sorted on render so entries move after save
+    const sorted = [...players].sort((a, b) => {
+        const aUnmapped = savedIds[a.platformId] == null;
+        const bUnmapped = savedIds[b.platformId] == null;
+        if (aUnmapped !== bUnmapped) return aUnmapped ? -1 : 1;
+        return a.playerName.localeCompare(b.playerName);
+    });
+
+    return (
+        <div>
+            <div className="flex justify-end mb-2">
+                <button
+                    className={`btn btn-primary btn-xs ${saving ? "loading" : ""}`}
+                    onClick={onSave}
+                    disabled={saving || dirty.length === 0}
+                >
+                    {!saving && (dirty.length > 0 ? `Save Changes (${dirty.length})` : "No Changes")}
+                </button>
+            </div>
+            <div className="max-h-80 overflow-y-auto pr-1">
+                {sorted.map((p) => (
+                    <div key={p.platformId} className="flex items-center gap-3 py-2 border-b dark:border-gray-700 last:border-0">
+                        <div className="w-1/2 min-w-0 pr-2">
+                            <div className="text-sm font-medium truncate" title={p.playerName}>
+                                {p.playerName}
+                            </div>
+                            <div
+                                className="text-xs font-mono text-gray-400 dark:text-gray-500 break-all leading-tight mt-0.5"
+                                title={p.platformId}
+                            >
+                                {p.platformId}
+                            </div>
+                        </div>
+                        <div className="w-1/2">
+                            <Select
+                                options={discordUsers}
+                                isClearable
+                                isSearchable
+                                placeholder="Select Discord user…"
+                                value={editStates[p.platformId] ?? null}
+                                onChange={(val) => onEditChange(p.platformId, val as DiscordUserOption | null)}
+                                getOptionLabel={(u) => u.nickname ?? u.displayName ?? u.username ?? u.userId}
+                                getOptionValue={(u) => u.userId}
+                                styles={buildSelectStyles(isDark)}
+                            />
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+// ── Session row content (can use hooks, receives open prop from Disclosure) ────
+function SessionRowContent({
+    open,
+    session,
+    missionOptions,
+    discordUsers,
+    onSaved,
+}: {
+    open: boolean;
+    session: any;
+    missionOptions: { value: string; label: string }[];
+    discordUsers: DiscordUserOption[];
+    onSaved: () => void;
+}) {
+    const initialOption = session.missionUniqueName
+        ? missionOptions.find((o) => o.value === session.missionUniqueName) ?? {
+              value: session.missionUniqueName,
+              label: session.missionUniqueName,
+          }
+        : null;
+
+    const [selectedMission, setSelectedMission] = useState<{ value: string; label: string } | null>(initialOption);
+    const [saving, setSaving] = useState(false);
+    const [confirmDelete, setConfirmDelete] = useState(false);
+    const [deleting, setDeleting] = useState(false);
+    const [showPlayers, setShowPlayers] = useState(false);
+
+    // Player mapping state — fetched once when the row first opens
+    const [players, setPlayers] = useState<{ platformId: string; playerName: string }[]>([]);
+    const [editStates, setEditStates] = useState<Record<string, DiscordUserOption | null>>({});
+    const [savedIds, setSavedIds] = useState<Record<string, string | null>>({});
+    const [playerDataLoaded, setPlayerDataLoaded] = useState(false);
+    const [playerSaving, setPlayerSaving] = useState(false);
+
+    const isDark =
+        typeof window !== "undefined" &&
+        document.documentElement.classList.contains("dark");
+
+    useEffect(() => {
+        if (!open || playerDataLoaded) return;
+
+        let cancelled = false;
+        async function loadPlayerData() {
+            try {
+                const [fullRes, mappingsRes] = await Promise.all([
+                    axios.get(`/api/server-sessions/${session._id}`),
+                    axios.get("/api/player-mappings"),
+                ]);
+                if (cancelled) return;
+
+                const snapshots: any[] = fullRes.data.snapshots ?? [];
+                const playerMap = new Map<string, string>();
+                snapshots.forEach((snap) => {
+                    const cp: Record<string, string> = snap.connectedPlayers ?? {};
+                    Object.entries(cp).forEach(([pid, name]) => {
+                        if (!playerMap.has(pid)) playerMap.set(pid, name);
+                    });
+                });
+
+                const uniquePlayers = Array.from(playerMap.entries()).map(([platformId, playerName]) => ({
+                    platformId,
+                    playerName,
+                }));
+
+                const allMappings: { platformId: string; discordId: string | null }[] =
+                    mappingsRes.data.mappings ?? [];
+                const mappingById = Object.fromEntries(allMappings.map((m) => [m.platformId, m.discordId]));
+
+                const savedMap: Record<string, string | null> = {};
+                const editMap: Record<string, DiscordUserOption | null> = {};
+                uniquePlayers.forEach(({ platformId }) => {
+                    const did = mappingById[platformId] ?? null;
+                    savedMap[platformId] = did;
+                    editMap[platformId] = did ? (discordUsers.find((u) => u.userId === did) ?? null) : null;
+                });
+
+                setPlayers(uniquePlayers);
+                setEditStates(editMap);
+                setSavedIds(savedMap);
+            } catch (err) {
+                console.error("Failed to load player data:", err);
+            } finally {
+                if (!cancelled) setPlayerDataLoaded(true);
+            }
+        }
+
+        loadPlayerData();
+        return () => { cancelled = true; };
+    }, [open]);
+
+    const mappedCount = players.filter((p) => savedIds[p.platformId] != null).length;
+
+    const handlePlayerSave = async () => {
+        const dirty = players.filter(
+            (p) => (editStates[p.platformId]?.userId ?? null) !== savedIds[p.platformId]
+        );
+        if (dirty.length === 0) return;
+        setPlayerSaving(true);
+        try {
+            const changes = dirty.map((p) => ({
+                platformId: p.platformId,
+                discordId: editStates[p.platformId]?.userId ?? null,
+            }));
+            await axios.put("/api/player-mappings", { changes });
+            setSavedIds((prev) => {
+                const next = { ...prev };
+                changes.forEach((c) => { next[c.platformId] = c.discordId; });
+                return next;
+            });
+            toast.success(`Saved ${dirty.length} mapping${dirty.length !== 1 ? "s" : ""}`);
+        } catch {
+            toast.error("Failed to save mappings");
+        } finally {
+            setPlayerSaving(false);
+        }
+    };
+
+    const handleSaveMission = async () => {
+        setSaving(true);
+        try {
+            await axios.patch(`/api/server-sessions/${session._id}`, {
+                missionUniqueName: selectedMission?.value ?? null,
+            });
+            toast.success("Mission link updated");
+            onSaved();
+        } catch {
+            toast.error("Failed to save");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleDelete = async () => {
+        setDeleting(true);
+        try {
+            await axios.delete(`/api/server-sessions/${session._id}`);
+            toast.success("Session deleted");
+            onSaved();
+        } catch {
+            toast.error("Failed to delete");
+            setDeleting(false);
+            setConfirmDelete(false);
+        }
+    };
+
+    const isMissionDirty = (selectedMission?.value ?? null) !== (session.missionUniqueName ?? null);
+
+    return (
+        <>
+            <Disclosure.Button className="flex items-center w-full px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors gap-3">
+                {/* Date */}
+                <span className="text-xs text-gray-500 dark:text-gray-400 w-32 shrink-0">
+                    {moment(session.startedAt).format("MMM DD, HH:mm")}
+                </span>
+
+                {/* Duration */}
+                <span className="text-xs w-16 shrink-0 font-mono">
+                    {formatDuration(session.startedAt, session.endedAt)}
+                </span>
+
+                {/* Peak players */}
+                <span className="badge badge-ghost badge-sm w-16 shrink-0">
+                    👥 {session.peakPlayerCount}
+                </span>
+
+                {/* Mission string */}
+                <span className="flex-1 text-xs truncate min-w-0" title={session.missionString}>
+                    {session.missionString}
+                </span>
+
+                {/* Mapped count — visible once player data is loaded */}
+                <span className="w-24 shrink-0 hidden md:flex justify-center">
+                    {playerDataLoaded && players.length > 0 && (
+                        <span className={`badge badge-xs ${mappedCount === players.length ? "badge-success" : mappedCount === 0 ? "badge-error" : "badge-warning"}`}>
+                            {mappedCount}/{players.length}
+                        </span>
+                    )}
+                </span>
+
+                {/* Confidence dot */}
+                <span className="w-40 shrink-0 hidden md:flex">
+                    <ConfidenceDot
+                        missionString={session.missionString}
+                        missionUniqueName={session.missionUniqueName}
+                        missionLinkSource={session.missionLinkSource}
+                    />
+                </span>
+
+                {/* Snapshots */}
+                <span className="text-xs text-gray-400 w-20 shrink-0 text-right hidden lg:block">
+                    {session.snapshotCount} snaps
+                </span>
+
+                {/* End reason */}
+                <span className="w-28 shrink-0 flex justify-end">
+                    <EndReasonBadge reason={session.endReason} />
+                </span>
+
+                <ChevronUpIcon
+                    className={`${open ? "" : "rotate-180"} w-4 h-4 text-gray-400 shrink-0 transition-transform`}
+                />
+            </Disclosure.Button>
+
+            <Transition
+                enter="transition duration-100 ease-out"
+                enterFrom="transform scale-95 opacity-0"
+                enterTo="transform scale-100 opacity-100"
+                leave="transition duration-75 ease-out"
+                leaveFrom="transform scale-100 opacity-100"
+                leaveTo="transform scale-95 opacity-0"
+            >
+                <Disclosure.Panel className="px-4 pb-4 bg-gray-50 dark:bg-gray-800 border-t dark:border-gray-700">
+                    <div className="pt-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Left: session details */}
+                        <div className="text-xs space-y-1 text-gray-600 dark:text-gray-400">
+                            <div>
+                                <span className="font-semibold">ID: </span>
+                                <span className="font-mono">{session._id}</span>
+                            </div>
+                            <div>
+                                <span className="font-semibold">Started: </span>
+                                {moment(session.startedAt).format("YYYY-MM-DD HH:mm:ss")}
+                            </div>
+                            <div>
+                                <span className="font-semibold">Ended: </span>
+                                {session.endedAt
+                                    ? moment(session.endedAt).format("YYYY-MM-DD HH:mm:ss")
+                                    : "Still active"}
+                            </div>
+                            <div>
+                                <span className="font-semibold">Peak players: </span>
+                                {session.peakPlayerCount}
+                            </div>
+                            <div>
+                                <span className="font-semibold">Snapshots: </span>
+                                {session.snapshotCount}
+                            </div>
+                            <div>
+                                <span className="font-semibold">End reason: </span>
+                                {session.endReason ?? "none"}
+                            </div>
+                            <div className="pt-2">
+                                {!confirmDelete ? (
+                                    <button
+                                        className="btn btn-error btn-outline btn-xs"
+                                        onClick={() => setConfirmDelete(true)}
+                                    >
+                                        Delete session
+                                    </button>
+                                ) : (
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            className={`btn btn-error btn-xs ${deleting ? "loading" : ""}`}
+                                            onClick={handleDelete}
+                                            disabled={deleting}
+                                        >
+                                            {!deleting && "Confirm delete"}
+                                        </button>
+                                        <button
+                                            className="btn btn-ghost btn-xs"
+                                            onClick={() => setConfirmDelete(false)}
+                                            disabled={deleting}
+                                        >
+                                            Cancel
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Right: mission link editor */}
+                        <div>
+                            <p className="text-xs font-semibold text-gray-600 dark:text-gray-400 mb-1">
+                                Mission link
+                            </p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400 mb-2 font-mono">
+                                {session.missionString}
+                            </p>
+                            <Select
+                                options={missionOptions}
+                                value={selectedMission}
+                                onChange={(opt) => setSelectedMission(opt)}
+                                isClearable
+                                placeholder="Search missions..."
+                                styles={buildSelectStyles(isDark)}
+                            />
+                            <div className="flex gap-2 mt-2">
+                                <button
+                                    className="btn btn-primary btn-xs"
+                                    onClick={handleSaveMission}
+                                    disabled={saving || !isMissionDirty}
+                                >
+                                    {saving ? "Saving…" : "Save"}
+                                </button>
+                                {session.missionUniqueName && (
+                                    <button
+                                        className="btn btn-ghost btn-xs"
+                                        onClick={() => setSelectedMission(null)}
+                                        disabled={saving}
+                                    >
+                                        Clear
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Players section */}
+                    <div className="mt-4 pt-4 border-t dark:border-gray-700">
+                        <button
+                            className="flex items-center justify-between w-full text-left"
+                            onClick={() => setShowPlayers((v) => !v)}
+                        >
+                            <span className="text-xs font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide flex items-center gap-2">
+                                Players
+                                {playerDataLoaded && players.length > 0 && (
+                                    <span className={`badge badge-xs ${mappedCount === players.length ? "badge-success" : mappedCount === 0 ? "badge-error" : "badge-warning"}`}>
+                                        {mappedCount}/{players.length} mapped
+                                    </span>
+                                )}
+                                {!playerDataLoaded && open && (
+                                    <span className="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin inline-block" />
+                                )}
+                            </span>
+                            <ChevronUpIcon
+                                className={`w-4 h-4 text-gray-400 transition-transform ${showPlayers ? "" : "rotate-180"}`}
+                            />
+                        </button>
+
+                        {showPlayers && (
+                            <div className="mt-3">
+                                {playerDataLoaded ? (
+                                    <PlayerMappingPanel
+                                        players={players}
+                                        editStates={editStates}
+                                        savedIds={savedIds}
+                                        discordUsers={discordUsers}
+                                        isDark={isDark}
+                                        onEditChange={(pid, val) =>
+                                            setEditStates((prev) => ({ ...prev, [pid]: val }))
+                                        }
+                                        onSave={handlePlayerSave}
+                                        saving={playerSaving}
+                                    />
+                                ) : (
+                                    <div className="flex justify-center py-4">
+                                        <Spinner />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                </Disclosure.Panel>
+            </Transition>
+        </>
+    );
+}
+
+// ── Session row (thin Disclosure wrapper) ─────────────────────────────────────
+function SessionRow({ session, missionOptions, discordUsers, onSaved }: {
+    session: any;
+    missionOptions: { value: string; label: string }[];
+    discordUsers: DiscordUserOption[];
+    onSaved: () => void;
+}) {
+    return (
+        <Disclosure as="div" className="border-b dark:border-gray-700 last:border-0">
+            {({ open }) => (
+                <SessionRowContent
+                    open={open}
+                    session={session}
+                    missionOptions={missionOptions}
+                    discordUsers={discordUsers}
+                    onSaved={onSaved}
+                />
+            )}
+        </Disclosure>
+    );
+}
+
+// ── All players panel ─────────────────────────────────────────────────────────
+function AllPlayersPanel({ discordUsers }: { discordUsers: DiscordUserOption[] }) {
+    const [loading, setLoading] = useState(true);
+    const [mappings, setMappings] = useState<{ platformId: string; playerName: string; discordId: string | null }[]>([]);
+    const [editStates, setEditStates] = useState<Record<string, DiscordUserOption | null>>({});
+    const [savedIds, setSavedIds] = useState<Record<string, string | null>>({});
+    const [saving, setSaving] = useState(false);
+    const [search, setSearch] = useState("");
+
+    const isDark =
+        typeof window !== "undefined" &&
+        document.documentElement.classList.contains("dark");
+
+    async function load() {
+        setLoading(true);
+        try {
+            const res = await axios.get("/api/player-mappings");
+            const fetched: { platformId: string; playerName: string; discordId: string | null }[] =
+                res.data.mappings ?? [];
+
+            const savedMap: Record<string, string | null> = {};
+            const editMap: Record<string, DiscordUserOption | null> = {};
+            fetched.forEach((m) => {
+                savedMap[m.platformId] = m.discordId;
+                editMap[m.platformId] = m.discordId
+                    ? (discordUsers.find((u) => u.userId === m.discordId) ?? null)
+                    : null;
+            });
+
+            setMappings(fetched);
+            setSavedIds(savedMap);
+            setEditStates(editMap);
+        } catch {
+            toast.error("Failed to load player mappings");
+        } finally {
+            setLoading(false);
+        }
+    }
+
+    useEffect(() => { load(); }, []);
+
+    // Detect duplicates: same discordId on more than one entry
+    const discordIdCounts: Record<string, number> = {};
+    mappings.forEach((m) => {
+        const did = savedIds[m.platformId];
+        if (did) discordIdCounts[did] = (discordIdCounts[did] ?? 0) + 1;
+    });
+    const duplicateDiscordIds = new Set(
+        Object.entries(discordIdCounts)
+            .filter(([, count]) => count > 1)
+            .map(([did]) => did)
+    );
+
+    const dirty = mappings.filter(
+        (m) => (editStates[m.platformId]?.userId ?? null) !== savedIds[m.platformId]
+    );
+    const mappedCount = mappings.filter((m) => savedIds[m.platformId] != null).length;
+
+    // Sort: unmapped first, then duplicates (need attention), then alphabetical
+    const sorted = [...mappings].sort((a, b) => {
+        const aUnmapped = savedIds[a.platformId] == null;
+        const bUnmapped = savedIds[b.platformId] == null;
+        if (aUnmapped !== bUnmapped) return aUnmapped ? -1 : 1;
+        const aDup = duplicateDiscordIds.has(savedIds[a.platformId] ?? "");
+        const bDup = duplicateDiscordIds.has(savedIds[b.platformId] ?? "");
+        if (aDup !== bDup) return aDup ? -1 : 1;
+        return a.playerName.localeCompare(b.playerName);
+    });
+
+    const handleSave = async () => {
+        if (dirty.length === 0) return;
+        setSaving(true);
+        try {
+            const changes = dirty.map((m) => ({
+                platformId: m.platformId,
+                discordId: editStates[m.platformId]?.userId ?? null,
+            }));
+            await axios.put("/api/player-mappings", { changes });
+            setSavedIds((prev) => {
+                const next = { ...prev };
+                changes.forEach((c) => { next[c.platformId] = c.discordId; });
+                return next;
+            });
+            toast.success(`Saved ${dirty.length} mapping${dirty.length !== 1 ? "s" : ""}`);
+        } catch {
+            toast.error("Failed to save mappings");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="flex justify-center py-8">
+                <Spinner />
+            </div>
+        );
+    }
+
+    const visibleRows = sorted.filter((m) => {
+        if (!search) return true;
+        const q = search.toLowerCase();
+        return m.playerName.toLowerCase().includes(q) || m.platformId.toLowerCase().includes(q);
+    });
+
+    return (
+        <div className="text-gray-900 dark:text-gray-100">
+            {duplicateDiscordIds.size > 0 && (
+                <div className="alert alert-warning mb-4 text-sm">
+                    ⚠️ {duplicateDiscordIds.size} Discord user{duplicateDiscordIds.size !== 1 ? "s are" : " is"} mapped
+                    to multiple game profiles — rows are highlighted below.
+                </div>
+            )}
+
+            <div className="flex items-center gap-3 mb-3 flex-wrap">
+                <input
+                    type="text"
+                    placeholder="Search by name or game ID…"
+                    className="input input-bordered input-sm flex-1 min-w-48 dark:bg-gray-700 dark:border-gray-600 dark:text-gray-100"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                />
+                <span className="text-sm text-gray-500 dark:text-gray-400 shrink-0">
+                    {visibleRows.length}/{mappings.length} · {mappedCount} mapped
+                </span>
+                <div className="flex gap-2 shrink-0">
+                    <button className="btn btn-ghost btn-xs" onClick={load}>
+                        <RefreshIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                        className={`btn btn-primary btn-sm ${saving ? "loading" : ""}`}
+                        onClick={handleSave}
+                        disabled={saving || dirty.length === 0}
+                    >
+                        {!saving && (dirty.length > 0 ? `Save Changes (${dirty.length})` : "No Changes")}
+                    </button>
+                </div>
+            </div>
+
+            <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                    <thead>
+                        <tr className="text-xs text-gray-500 dark:text-gray-400 border-b dark:border-gray-600">
+                            <th className="text-left py-2 pr-3 w-1/4 font-medium">Player Name</th>
+                            <th className="text-left py-2 pr-3 w-1/4 font-medium">Game ID</th>
+                            <th className="text-left py-2 font-medium">Discord User</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {visibleRows.map((m) => {
+                            const isDuplicate = duplicateDiscordIds.has(savedIds[m.platformId] ?? "");
+                            return (
+                                <tr
+                                    key={m.platformId}
+                                    className={`border-b dark:border-gray-700 last:border-0 ${isDuplicate ? "bg-orange-50 dark:bg-orange-900/20" : ""}`}
+                                >
+                                    <td className="py-2 pr-3 font-medium text-gray-900 dark:text-gray-100">
+                                        {m.playerName}
+                                    </td>
+                                    <td className="py-2 pr-3">
+                                        <span
+                                            className="font-mono text-xs text-gray-400 dark:text-gray-500 break-all"
+                                            title={m.platformId}
+                                        >
+                                            {m.platformId}
+                                        </span>
+                                    </td>
+                                    <td className="py-2">
+                                        <div className="flex items-center gap-2">
+                                            <div className="flex-1">
+                                                <Select
+                                                    options={discordUsers}
+                                                    isClearable
+                                                    isSearchable
+                                                    placeholder="Select Discord user…"
+                                                    value={editStates[m.platformId] ?? null}
+                                                    onChange={(val) =>
+                                                        setEditStates((prev) => ({
+                                                            ...prev,
+                                                            [m.platformId]: val as DiscordUserOption | null,
+                                                        }))
+                                                    }
+                                                    getOptionLabel={(u) =>
+                                                        u.nickname ?? u.displayName ?? u.username ?? u.userId
+                                                    }
+                                                    getOptionValue={(u) => u.userId}
+                                                    styles={buildSelectStyles(isDark)}
+                                                />
+                                            </div>
+                                            {isDuplicate && (
+                                                <span
+                                                    title="Same Discord user is mapped to another game profile"
+                                                    className="text-orange-500 text-base shrink-0"
+                                                >
+                                                    ⚠️
+                                                </span>
+                                            )}
+                                        </div>
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                        {visibleRows.length === 0 && (
+                            <tr>
+                                <td colSpan={3} className="py-6 text-center text-gray-400 dark:text-gray-500">
+                                    No players match "{search}"
+                                </td>
+                            </tr>
+                        )}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+export default function ServerSessionsPage() {
+    const { data: session } = useSession();
+
+    const [search, setSearch] = useState("");
+    const [endReason, setEndReason] = useState("all");
+    const twoWeeksAgo = () => { const d = new Date(); d.setDate(d.getDate() - 14); d.setHours(0, 0, 0, 0); return d; };
+    const [startDate, setStartDate] = useState<Date | null>(twoWeeksAgo());
+    const [endDate, setEndDate] = useState<Date | null>(null);
+    const [page, setPage] = useState(0);
+    const [showAllPlayers, setShowAllPlayers] = useState(false);
+
+    const params = new URLSearchParams();
+    params.set("limit", String(PAGE_SIZE));
+    params.set("skip", String(page * PAGE_SIZE));
+    if (search) params.set("search", search);
+    if (endReason !== "all") params.set("endReason", endReason);
+    if (startDate) params.set("startDate", startDate.toISOString());
+    if (endDate) params.set("endDate", endDate.toISOString());
+
+    const { data, error, mutate } = useSWR(
+        session ? `/api/server-sessions?${params.toString()}` : null,
+        fetcher
+    );
+
+    const { data: missionList } = useSWR(
+        session ? "/api/reforger-missions/list" : null,
+        fetcher
+    );
+
+    const { data: discordUsers } = useSWR<DiscordUserOption[]>(
+        session ? "/api/discord-users" : null,
+        fetcher
+    );
+
+    if (!session || !hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.MISSION_REVIEWER])) {
+        return (
+            <div className="flex items-center justify-center h-screen">
+                <div className="text-xl">Not Authorized</div>
+            </div>
+        );
+    }
+
+    const sessions = data?.sessions ?? [];
+    const total: number = data?.total ?? 0;
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+    const missionOptions: { value: string; label: string }[] = (missionList ?? []).map((m: any) => {
+        const name = m.missionName || m.uniqueName;
+        const type = m.type ?? "";
+        const min = m.size?.min ?? "";
+        const max = m.size?.max ?? "";
+        const suffix = type && min && max ? ` — ${type} (${min}-${max})` : "";
+        return { value: m.uniqueName, label: `${name}${suffix}` };
+    });
+
+    const handleReset = () => {
+        setSearch("");
+        setEndReason("all");
+        setStartDate(twoWeeksAgo());
+        setEndDate(null);
+        setPage(0);
+    };
+
+    const datePresets = [
+        { label: "1 week",   days: 7 },
+        { label: "2 weeks",  days: 14 },
+        { label: "1 month",  days: 30 },
+        { label: "3 months", days: 90 },
+        { label: "All time", days: null },
+    ];
+
+    const endReasonFilters = [
+        { value: "all", label: "All" },
+        { value: "active", label: "Active" },
+        { value: "server_restart", label: "Restart" },
+        { value: "mission_change", label: "Mission Change" },
+        { value: "stale", label: "Stale" },
+        { value: "load_event", label: "Load Event" },
+    ];
+
+    return (
+        <div className="min-h-screen bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+            <Head>
+                <title>Server Sessions - Global Conflicts</title>
+            </Head>
+
+            <div className="container mx-auto px-4 py-8 flex flex-col md:flex-row gap-6">
+                {/* Sidebar filters */}
+                <div className="w-full md:w-1/4 space-y-4">
+                    <div className="bg-white dark:bg-gray-800 p-4 rounded-lg shadow">
+                        <h2 className="text-lg font-bold mb-4 flex items-center justify-between">
+                            Filters
+                            <button onClick={() => mutate()} className="btn btn-ghost btn-xs">
+                                <RefreshIcon className="w-4 h-4" />
+                            </button>
+                        </h2>
+
+                        <div className="form-control w-full mb-3">
+                            <label className="label">
+                                <span className="label-text">Mission string</span>
+                            </label>
+                            <input
+                                type="text"
+                                value={search}
+                                onChange={(e) => { setSearch(e.target.value); setPage(0); }}
+                                className="input input-bordered w-full input-sm"
+                                placeholder="Search…"
+                            />
+                        </div>
+
+                        <div className="form-control w-full mb-3">
+                            <label className="label">
+                                <span className="label-text">End reason</span>
+                            </label>
+                            <div className="flex flex-wrap gap-1">
+                                {endReasonFilters.map((f) => (
+                                    <button
+                                        key={f.value}
+                                        onClick={() => { setEndReason(f.value); setPage(0); }}
+                                        className={`btn btn-xs ${endReason === f.value ? "btn-primary" : "btn-ghost"}`}
+                                    >
+                                        {f.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="form-control w-full mb-3">
+                            <label className="label">
+                                <span className="label-text">Date range</span>
+                            </label>
+                            <div className="flex flex-wrap gap-1 mb-2">
+                                {datePresets.map((p) => {
+                                    const presetStart = p.days
+                                        ? (() => { const d = new Date(); d.setDate(d.getDate() - p.days); d.setHours(0, 0, 0, 0); return d; })()
+                                        : null;
+                                    const isActive = p.days === null
+                                        ? startDate === null && endDate === null
+                                        : startDate?.toDateString() === presetStart?.toDateString() && endDate === null;
+                                    return (
+                                        <button
+                                            key={p.label}
+                                            className={`btn btn-xs ${isActive ? "btn-primary" : "btn-ghost"}`}
+                                            onClick={() => { setStartDate(presetStart); setEndDate(null); setPage(0); }}
+                                        >
+                                            {p.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            <div className="flex flex-col gap-2">
+                                <DatePicker
+                                    selected={startDate}
+                                    onChange={(d) => { setStartDate(d); setPage(0); }}
+                                    selectsStart
+                                    startDate={startDate}
+                                    endDate={endDate}
+                                    placeholderText="From"
+                                    dateFormat="yyyy-MM-dd"
+                                    className="input input-bordered w-full input-sm"
+                                />
+                                <DatePicker
+                                    selected={endDate}
+                                    onChange={(d) => { setEndDate(d); setPage(0); }}
+                                    selectsEnd
+                                    startDate={startDate}
+                                    endDate={endDate}
+                                    minDate={startDate}
+                                    placeholderText="To"
+                                    dateFormat="yyyy-MM-dd"
+                                    className="input input-bordered w-full input-sm"
+                                />
+                            </div>
+                        </div>
+
+                        <button className="btn btn-sm w-full mt-1" onClick={handleReset}>
+                            Reset Filters
+                        </button>
+                    </div>
+                </div>
+
+                {/* Main content */}
+                <div className="w-full md:w-3/4 space-y-6">
+                    {/* Title above the card */}
+                    <h1 className="text-xl font-bold">
+                        Server Sessions
+                        {total > 0 && (
+                            <span className="ml-2 text-sm font-normal text-gray-500 dark:text-gray-400">
+                                ({total} total)
+                            </span>
+                        )}
+                    </h1>
+
+                    {/* Sessions table */}
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                        {/* Column headers */}
+                        <div className="hidden md:flex items-center px-4 py-2 gap-3 border-b dark:border-gray-700 text-xs text-gray-400 dark:text-gray-500 font-medium">
+                            <span className="w-32">Date</span>
+                            <span className="w-16">Duration</span>
+                            <span className="w-16">Players</span>
+                            <span className="flex-1">Mission</span>
+                            <span className="w-24 text-center hidden md:block">Mapped</span>
+                            <span className="w-40">Match</span>
+                            <span className="w-20 text-right hidden lg:block">Snaps</span>
+                            <span className="w-28 text-right">Reason</span>
+                            <span className="w-4" />
+                        </div>
+
+                        {/* Rows */}
+                        {!data && !error && (
+                            <div className="p-8 text-center text-gray-500">Loading…</div>
+                        )}
+                        {error && (
+                            <div className="p-8 text-center text-red-500">Failed to load sessions.</div>
+                        )}
+                        {data && sessions.length === 0 && (
+                            <div className="p-8 text-center text-gray-500">No sessions found.</div>
+                        )}
+                        {sessions.map((s: any) => (
+                            <SessionRow
+                                key={s._id}
+                                session={s}
+                                missionOptions={missionOptions}
+                                discordUsers={discordUsers ?? []}
+                                onSaved={() => mutate()}
+                            />
+                        ))}
+
+                        {/* Pagination */}
+                        {total > PAGE_SIZE && (
+                            <div className="px-4 py-3 border-t dark:border-gray-700 flex items-center justify-between text-sm">
+                                <button
+                                    className="btn btn-sm btn-ghost"
+                                    onClick={() => setPage((p) => Math.max(0, p - 1))}
+                                    disabled={page === 0}
+                                >
+                                    ← Previous
+                                </button>
+                                <span className="text-gray-500">
+                                    Page {page + 1} of {totalPages}
+                                </span>
+                                <button
+                                    className="btn btn-sm btn-ghost"
+                                    onClick={() => setPage((p) => Math.min(totalPages - 1, p + 1))}
+                                    disabled={page >= totalPages - 1}
+                                >
+                                    Next →
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* All player mappings — collapsible table */}
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                        <button
+                            className="flex items-center justify-between w-full px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                            onClick={() => setShowAllPlayers((v) => !v)}
+                        >
+                            <span className="font-semibold text-sm">All Player Mappings</span>
+                            <ChevronUpIcon
+                                className={`w-4 h-4 text-gray-400 transition-transform ${showAllPlayers ? "" : "rotate-180"}`}
+                            />
+                        </button>
+
+                        {showAllPlayers && (
+                            <div className="px-4 pb-4 border-t dark:border-gray-700">
+                                <div className="pt-4">
+                                    {discordUsers ? (
+                                        <AllPlayersPanel discordUsers={discordUsers} />
+                                    ) : (
+                                        <div className="flex justify-center py-6">
+                                            <Spinner />
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}

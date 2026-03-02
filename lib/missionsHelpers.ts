@@ -112,6 +112,22 @@ export function fileNameMediaParse(req, file, cb, missionName) {
 	return cb(null, mediaName);
 }
 
+/**
+ * Find a Reforger mission by URL slug, accepting both `uniqueName` and `missionId`.
+ * Use this in all API routes under /api/reforger-missions/[uniqueName]/ so that
+ * Discord links (which use the stable missionId) and browser links (which use the
+ * human-readable uniqueName) both resolve correctly.
+ */
+export async function findReforgerMissionBySlug(
+	db: any,
+	slug: string,
+	projection?: Record<string, 0 | 1>
+) {
+	const filter = { $or: [{ uniqueName: slug }, { missionId: slug }] };
+	const options = projection ? { projection } : {};
+	return db.collection("reforger_missions").findOne(filter, options);
+}
+
 export function buildVersionStr(versionObj: Version): string {
 	if (versionObj.major === -1) {
 		return "General";

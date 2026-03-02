@@ -263,8 +263,12 @@ export default function AdminControlsModal({
     const [dateModalOpen, setDateModalOpen] = useState(false);
     const [isDeleting, setIsDeleting] = useState(false);
     const [isFixingDates, setIsFixingDates] = useState(false);
+    const [isFixingSlugs, setIsFixingSlugs] = useState(false);
     const [showTerrainMapper, setShowTerrainMapper] = useState(false);
     const [showAuthorMapper, setShowAuthorMapper] = useState(false);
+    const [syncMissionUrl, setSyncMissionUrl] = useState('');
+    const [isSyncingMission, setIsSyncingMission] = useState(false);
+    const [isBackfillingBriefings, setIsBackfillingBriefings] = useState(false);
 
     const handleDeleteAll = async () => {
         if (!confirm("CRITICAL ACTION: This will delete ALL Reforger missions from the database. This cannot be undone (until you sync again). Proceed?")) {
@@ -279,6 +283,58 @@ export default function AdminControlsModal({
             toast.error("Delete failed: " + (error.response?.data?.error || error.message));
         } finally {
             setIsDeleting(false);
+        }
+    };
+
+    const handleFixDuplicateSlugs = async () => {
+        if (!confirm("This will scan all missions for duplicate URL slugs and rename duplicates by appending _2, _3, etc. The oldest mission (by insertion order) keeps the original slug. Proceed?")) {
+            return;
+        }
+        setIsFixingSlugs(true);
+        try {
+            const res = await axios.post("/api/reforger-missions/fix-duplicate-slugs");
+            const { fixed, details } = res.data;
+            if (fixed === 0) {
+                toast.success("No duplicate slugs found — everything is clean!");
+            } else {
+                const preview = details.slice(0, 5).map(d => `• "${d.name}": ${d.from} → ${d.to}`).join("\n");
+                const more = fixed > 5 ? `\n...and ${fixed - 5} more` : "";
+                toast.success(`Fixed ${fixed} duplicate slug(s):\n${preview}${more}`, { autoClose: 8000 });
+            }
+        } catch (error) {
+            toast.error("Fix slugs failed: " + (error.response?.data?.error || error.message));
+        } finally {
+            setIsFixingSlugs(false);
+        }
+    };
+
+    const handleSyncMissionUrl = async () => {
+        if (!syncMissionUrl.trim()) return;
+        setIsSyncingMission(true);
+        try {
+            const res = await axios.post('/api/reforger-missions/sync-mission-url', { githubUrl: syncMissionUrl.trim() });
+            const { name, type, briefing } = res.data;
+            const overviewFlag = briefing?.missionOverview ? '✓' : '✗';
+            const notesFlag = briefing?.missionNotes ? '✓' : '✗';
+            toast.success(`Synced "${name}" (${type}). Overview: ${overviewFlag} Notes: ${notesFlag}`);
+        } catch (error) {
+            toast.error('Sync failed: ' + (error.response?.data?.error || error.message));
+        } finally {
+            setIsSyncingMission(false);
+        }
+    };
+
+    const handleBackfillBriefings = async () => {
+        if (!confirm("This will scan all missions' layer files for Mission Overview and Notes content. It may take a few minutes depending on the number of missions. Proceed?")) return;
+        setIsBackfillingBriefings(true);
+        try {
+            const res = await axios.post("/api/reforger-missions/backfill-briefings");
+            const { results } = res.data;
+            toast.success(`Briefing backfill complete: ${results.updated} updated, ${results.skipped} no data found, ${results.errors} errors.`, { autoClose: 8000 });
+        } catch (error) {
+            toast.error("Backfill failed: " + (error.response?.data?.error || error.message));
+        } finally {
+            setIsBackfillingBriefings(false);
         }
     };
 
@@ -378,9 +434,39 @@ export default function AdminControlsModal({
                                     <a href="/logs" className="btn btn-info btn-sm w-full">
                                         View Logs
                                     </a>
+                                    <a href="/staff/server-sessions" className="btn btn-info btn-sm w-full">
+                                        Server Sessions
+                                    </a>
                                 </div>
                                 
-                                {/* Section 2: Terrain Management */}
+                                {/* Section 2: Sync Single Mission */}
+                                {hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.MISSION_REVIEWER]) && (
+                                <div className="pt-4 border-t dark:border-gray-700">
+                                    <h4 className="font-semibold text-sm mb-2 uppercase tracking-wide opacity-70">Sync Single Mission</h4>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            placeholder="GitHub folder URL..."
+                                            className="input input-bordered input-sm flex-1 dark:text-gray-200"
+                                            value={syncMissionUrl}
+                                            onChange={e => setSyncMissionUrl(e.target.value)}
+                                            disabled={isSyncingMission}
+                                        />
+                                        <button
+                                            className={`btn btn-info btn-outline btn-sm ${isSyncingMission ? 'loading' : ''}`}
+                                            onClick={handleSyncMissionUrl}
+                                            disabled={isSyncingMission || !syncMissionUrl.trim()}
+                                        >
+                                            {!isSyncingMission && 'Sync'}
+                                        </button>
+                                    </div>
+                                    <p className="text-xs opacity-50 mt-1">
+                                        Paste a GitHub worlds/Author/MissionName URL
+                                    </p>
+                                </div>
+                                )}
+
+                                {/* Section 4: Terrain Management */}
                                 {hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.MISSION_REVIEWER]) && (
                                 <div className="pt-4 border-t dark:border-gray-700">
                                      <h4 className="font-semibold text-sm mb-2 uppercase tracking-wide opacity-70">Terrain Management</h4>
@@ -403,17 +489,31 @@ export default function AdminControlsModal({
                                 </div>
                                 )}
 
-                                {/* Section 3: Initial Setup */}
+                                {/* Section 5: Initial Setup */}
                                 {hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.MISSION_REVIEWER]) && (
                                     <div className="pt-4 border-t dark:border-gray-700">
                                         <h4 className="font-semibold text-sm mb-2 uppercase tracking-wide text-red-500 opacity-80">Initial Setup & Destructive Actions</h4>
                                         <div className="space-y-3">
+                                            <button
+                                                disabled={isBackfillingBriefings || isSyncing}
+                                                onClick={handleBackfillBriefings}
+                                                className={`btn btn-warning btn-outline w-full ${isBackfillingBriefings ? 'loading' : ''}`}
+                                            >
+                                                Backfill Mission Briefings
+                                            </button>
                                             <button
                                                 disabled={isFixingDates || isSyncing}
                                                 onClick={handleFixUploadDates}
                                                 className={`btn btn-warning btn-outline w-full ${isFixingDates ? 'loading' : ''}`}
                                             >
                                                 Fix Mission Upload Dates
+                                            </button>
+                                            <button
+                                                disabled={isFixingSlugs || isSyncing}
+                                                onClick={handleFixDuplicateSlugs}
+                                                className={`btn btn-warning btn-outline w-full ${isFixingSlugs ? 'loading' : ''}`}
+                                            >
+                                                Fix Duplicate URL Slugs
                                             </button>
                                             <button
                                                 disabled={isSyncing}

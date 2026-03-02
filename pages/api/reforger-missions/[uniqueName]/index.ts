@@ -105,7 +105,7 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
 	}
 
 	await (await MyMongo).db("prod").collection("reforger_missions").updateOne(
-		{ uniqueName: uniqueName },
+		{ $or: [{ uniqueName: uniqueName }, { missionId: uniqueName }] },
 		{
 			$set: updateBody,
 		}

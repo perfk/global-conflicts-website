@@ -11,6 +11,7 @@ import {
 	callBotEditMessage,
 	callBotDeleteMessage,
 } from "../../../../../../lib/discordPoster";
+import { findReforgerMissionBySlug } from "../../../../../../lib/missionsHelpers";
 
 const apiRoute = nextConnect({
 	onError(error, req: NextApiRequest, res: NextApiResponse) {
@@ -36,10 +37,7 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 
 	const db = (await MyMongo).db("prod");
 
-	const mission = await db.collection("reforger_missions").findOne(
-		{ uniqueName },
-		{ projection: { missionId: 1, uniqueName: 1, name: 1 } }
-	);
+	const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1, name: 1 });
 	if (!mission) {
 		return res.status(404).json({ error: "Mission not found" });
 	}
@@ -113,7 +111,7 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 
 ${truncated}
 
-[View on website](${websiteUrl}/reforger-missions/${uniqueName})`;
+[View on website](${websiteUrl}/reforger-missions/${mission.missionId})`;
 				const embed = {
 					description,
 					color: "#0070ff",

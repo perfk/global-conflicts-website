@@ -668,7 +668,7 @@ export async function getServerSideProps(context) {
 	const db = (await MyMongo).db("prod");
 
 	const mission = await db.collection("reforger_missions").findOne(
-		{ uniqueName: context.params.uniqueName },
+		{ $or: [{ uniqueName: context.params.uniqueName }, { missionId: context.params.uniqueName }] },
 		{
 			projection: {
 				_id: 0,

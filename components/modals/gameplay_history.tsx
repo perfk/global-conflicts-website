@@ -26,6 +26,7 @@ export default function GameplayHistoryModal({
 	mission,
 	historyToLoad,
     isReforger = false,
+    historyCount = 0,
 }) {
 	const [gmNote, setGmNote] = React.useState("");
 	const [selectedNoteTab, setSelectedNoteTab] = React.useState<
@@ -53,6 +54,7 @@ export default function GameplayHistoryModal({
 	const [dateError, setDateError] = useState("");
 	const [isLoading, setIsLoading] = useState(false);
 	const [aarReplayLink, setAARReplayLink] = useState("");
+	const [showAdvanced, setShowAdvanced] = useState(false);
 
 	// Session selector + timestamps (Reforger only)
 	const [sessionHistory, setSessionHistory] = useState<any[]>([]);
@@ -60,6 +62,12 @@ export default function GameplayHistoryModal({
 	const [sessionStartedAt, setSessionStartedAt] = useState("");
 	const [sessionEndedAt, setSessionEndedAt] = useState("");
 	const [isCreatingDiscordMessage, setIsCreatingDiscordMessage] = useState(false);
+
+	// Server session link (Reforger only — preserved on edit, changeable by GM)
+	const [serverSessionId, setServerSessionId] = useState<string | null>(null);
+	const [nearSessions, setNearSessions] = useState<any[]>([]);
+	const [nearSessionsLoading, setNearSessionsLoading] = useState(false);
+
 
 	function toDatetimeLocal(date: Date): string {
 		const pad = (n: number) => String(n).padStart(2, "0");
@@ -118,6 +126,29 @@ export default function GameplayHistoryModal({
 			.catch(() => setSessionHistory([]));
 	}, [isOpen, isReforger]);
 
+	// Fetch server sessions near the entry date so the GM can change/clear the link
+	useEffect(() => {
+		if (!isOpen || !isReforger) return;
+		const start = new Date(dateObj);
+		start.setDate(start.getDate() - 7);
+		const end = new Date(dateObj);
+		end.setDate(end.getDate() + 1);
+		setNearSessionsLoading(true);
+		axios
+			.get("/api/server-sessions", {
+				params: { startDate: start.toISOString(), endDate: end.toISOString(), limit: 50 },
+			})
+			.then((r) => {
+				const sessions = (r.data.sessions ?? []).map((s: any) => ({
+					...s,
+					_id: typeof s._id === "object" ? s._id.toString() : String(s._id),
+				}));
+				setNearSessions(sessions);
+			})
+			.catch(() => setNearSessions([]))
+			.finally(() => setNearSessionsLoading(false));
+	}, [isOpen, isReforger]);
+
 	// When editing an existing entry, match its stored discordMessageId to session history
 	useEffect(() => {
 		if (!isReforger || !historyToLoad) return;
@@ -147,7 +178,7 @@ export default function GameplayHistoryModal({
 		if (outcome?.value) setSessionEndedAt(toDatetimeLocal(new Date()));
 	}, [outcome]);
 
-	function addHistory() {
+	async function addHistory(postToDiscord: boolean = true) {
 		setIsLoading(true);
 		try {
 			const data = {
@@ -167,7 +198,8 @@ export default function GameplayHistoryModal({
 				}),
 
 				outcome: outcome?.value || null,
-				...(isReforger && selectedSession && {
+				...(isReforger && { serverSessionId: serverSessionId || null }),
+				...(isReforger && postToDiscord && selectedSession && {
 					discordMessageId: selectedSession.messageId,
 					discordThreadId: selectedSession.threadId,
 					discordMessageUrl: selectedSession.discordMessageUrl ?? null,
@@ -182,33 +214,69 @@ export default function GameplayHistoryModal({
                 ? `/api/reforger-missions/${mission.uniqueName}/history`
                 : `/api/missions/${mission.uniqueName}/history`;
 
-			axios
-				.request({
-					method: historyToLoad ? "PUT" : "POST",
-					url: endpoint,
-					data: data,
-				})
+			// --- Stale data check ---
+			try {
+				const checkRes = await axios.get(endpoint);
+				const entries: any[] = Array.isArray(checkRes.data) ? checkRes.data : [];
 
-				.then((response) => {
-					clear();
-					onClose(data, !!historyToLoad);
-				})
-				.catch((error) => {
-					console.error(error);
-					if (error?.response?.status == 500) {
-						toast.error("Error submiting history");
-					} else {
-						if (error?.response?.data && error?.response?.data?.error) {
-							toast.error(error.response.data.error);
+				if (!historyToLoad) {
+					// ADD mode: warn if new entries appeared since the page was loaded
+					if (entries.length > historyCount) {
+						const diff = entries.length - historyCount;
+						const confirmed = window.confirm(
+							`${diff} new gameplay history ${diff === 1 ? "entry has" : "entries have"} been added since you opened this form.\n\nProceed and add your entry anyway?`
+						);
+						if (!confirmed) {
+							setIsLoading(false);
+							return;
 						}
 					}
-				})
-				.finally(() => {
-					setIsLoading(false);
-				});
+				} else {
+					// EDIT mode: warn if this specific entry was modified or deleted by another user
+					const currentEntry = entries.find(
+						(e: any) => String(e._id) === String(historyToLoad._id)
+					);
+					if (!currentEntry) {
+						toast.error("This history entry no longer exists — it may have been deleted by another user.");
+						setIsLoading(false);
+						return;
+					}
+					const changed =
+						(currentEntry.outcome ?? null) !== (historyToLoad.outcome ?? null) ||
+						(currentEntry.gmNote ?? "") !== (historyToLoad.gmNote ?? "") ||
+						(currentEntry.leaders?.length ?? 0) !== (historyToLoad.leaders?.length ?? 0);
+					if (changed) {
+						const confirmed = window.confirm(
+							"This history entry was modified by another user since you opened this form.\n\nDo you want to proceed and overwrite their changes?"
+						);
+						if (!confirmed) {
+							setIsLoading(false);
+							return;
+						}
+					}
+				}
+			} catch {
+				// Check failed — proceed anyway to avoid blocking the user
+			}
+
+			const response = await axios.request({
+				method: historyToLoad ? "PUT" : "POST",
+				url: endpoint,
+				data: data,
+			});
+
+			clear();
+			onClose(data, !!historyToLoad);
 		} catch (error) {
 			console.error(error);
-			toast.error("Error submiting history");
+			if (error?.response?.status == 500) {
+				toast.error("Error submiting history");
+			} else {
+				if (error?.response?.data && error?.response?.data?.error) {
+					toast.error(error.response.data.error);
+				}
+			}
+		} finally {
 			setIsLoading(false);
 		}
 	}
@@ -272,12 +340,15 @@ export default function GameplayHistoryModal({
 			setDateObj(date.toDate());
 			setDateString(date.format("DD/MM/YYYY"));
 			setAARReplayLink(historyToLoad.aarReplayLink);
+			setShowAdvanced(!!historyToLoad.aarReplayLink);
 			setSessionStartedAt(historyToLoad.sessionStartedAt ? toDatetimeLocal(new Date(historyToLoad.sessionStartedAt)) : "");
 			setSessionEndedAt(historyToLoad.sessionEndedAt ? toDatetimeLocal(new Date(historyToLoad.sessionEndedAt)) : "");
+			setServerSessionId(historyToLoad.serverSessionId ? String(historyToLoad.serverSessionId) : null);
 		} else {
 			clear();
 		}
 	}, [historyToLoad]);
+
 	function clear() {
 		setGmNote("");
 		setListOfLeaders([]);
@@ -286,9 +357,12 @@ export default function GameplayHistoryModal({
 		setDateString(moment().format("DD/MM/YYYY"));
 		setDateError("");
 		setAARReplayLink("");
+		setShowAdvanced(false);
 		setSessionStartedAt("");
 		setSessionEndedAt("");
 		setSelectedSession(null);
+		setServerSessionId(null);
+		setNearSessions([]);
 	}
 
 	const [_document, set_document] = React.useState(null);
@@ -334,7 +408,15 @@ export default function GameplayHistoryModal({
 							<Dialog.Title as="h3" className="text-lg font-medium leading-6 ">
 								New Gameplay History
 							</Dialog.Title>
+							<div className="flex gap-1 mt-1 mb-3">
+								<span className="badge badge-sm badge-neutral">Admin</span>
+								<span className="badge badge-sm badge-neutral">Arma GM</span>
+								<span className="badge badge-sm badge-neutral">Mission Review Team</span>
+							</div>
 							<div className="mt-2 space-y-5 ">
+						{/* Outcome + Date on same row */}
+						<div className="flex gap-2 items-start">
+							<div className="flex-1">
 								<CreatableSelect
 									classNamePrefix="select-input"
 									menuPortalTarget={_document}
@@ -347,6 +429,8 @@ export default function GameplayHistoryModal({
 									isClearable
 									value={outcome}
 								/>
+							</div>
+							<div className="w-36 shrink-0">
 								{/* @ts-ignore */}
 								<NumberFormat
 									format="##/##/####"
@@ -373,62 +457,10 @@ export default function GameplayHistoryModal({
 									}}
 								/>
 								{dateError && (
-									<span className="text-red-500 label-text-alt">{dateError}</span>
+									<span className="text-red-500 label-text-alt text-xs">{dateError}</span>
 								)}
-
-								<input
-									type="text"
-									placeholder="AAR Link"
-									value={aarReplayLink}
-									onChange={(e) => {
-										setAARReplayLink(e.target.value.trim());
-									}}
-									className="w-full rounded-lg input input-bordered"
-								/>
-
-								<ReactMde
-									value={gmNote}
-									toolbarCommands={[
-										[
-											"header",
-											"bold",
-											"italic",
-											"strikethrough",
-											"link",
-											"quote",
-											"code",
-											"unordered-list",
-											"ordered-list",
-										],
-									]}
-									onChange={setGmNote}
-									selectedTab={selectedNoteTab}
-									onTabChange={setSelectedNoteTab}
-									classes={{
-										textArea: "",
-										reactMde: ",de",
-									}}
-									childProps={{
-										writeButton: {
-											tabIndex: -1,
-											style: { padding: "0 10px" },
-										},
-										previewButton: {
-											style: { padding: "0 10px" },
-										},
-									}}
-									generateMarkdownPreview={async (markdown) => {
-										return Promise.resolve(
-											<div
-												className="prose"
-												dangerouslySetInnerHTML={{
-													__html: generateMarkdown(markdown),
-												}}
-											></div>
-										);
-									}}
-								/>
-
+							</div>
+						</div>
 								<Select
 									options={[notOnDiscordUser, ...discordUsers]}
 									classNamePrefix="select-input"
@@ -599,47 +631,154 @@ export default function GameplayHistoryModal({
 										/>
 									</div>
 								)}
+							{/* ── Advanced (GM notes · AAR link · Session chart) ── */}
+							<div>
+								<button
+									type="button"
+									className="text-xs text-gray-400 hover:text-gray-200 mt-1"
+									onClick={() => setShowAdvanced(!showAdvanced)}
+								>
+									{showAdvanced ? "▲ Hide advanced" : "▼ Advanced (GM notes · AAR link · Session chart)"}
+								</button>
+								{showAdvanced && (
+									<div className="space-y-3 mt-3">
+									<ReactMde
+									value={gmNote}
+									toolbarCommands={[
+									[
+										"header",
+										"bold",
+										"italic",
+										"strikethrough",
+										"link",
+										"quote",
+										"code",
+										"unordered-list",
+										"ordered-list",
+									],
+									]}
+									onChange={setGmNote}
+									selectedTab={selectedNoteTab}
+									onTabChange={setSelectedNoteTab}
+									minEditorHeight={60}
+									maxEditorHeight={160}
+									classes={{
+									textArea: "",
+									reactMde: ",de",
+									}}
+									childProps={{
+									writeButton: {
+										tabIndex: -1,
+										style: { padding: "0 10px" },
+									},
+									previewButton: {
+										style: { padding: "0 10px" },
+									},
+									}}
+									generateMarkdownPreview={async (markdown) => {
+									return Promise.resolve(
+										<div
+											className="prose"
+											dangerouslySetInnerHTML={{
+												__html: generateMarkdown(markdown),
+											}}
+										></div>
+									);
+									}}
+									/>
+									<input
+										type="text"
+										placeholder="AAR Link"
+										value={aarReplayLink}
+										onChange={(e) => {
+											setAARReplayLink(e.target.value.trim());
+										}}
+										className="w-full rounded-lg input input-bordered"
+									/>
+									{isReforger && (
+										<div>
+											<label className="label pb-1">
+												<span className="label-text text-xs">Server session chart link</span>
+												{serverSessionId && (
+													<span className="label-text-alt text-xs text-gray-400 font-mono">{serverSessionId.slice(-8)}</span>
+												)}
+											</label>
+											<Select
+												classNamePrefix="select-input"
+												menuPlacement="auto"
+												menuPortalTarget={_document}
+												styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
+												isClearable
+												isLoading={nearSessionsLoading}
+												placeholder="None (no chart linked)"
+												options={nearSessions}
+												value={nearSessions.find((s) => s._id === serverSessionId) ?? (serverSessionId ? { _id: serverSessionId, missionString: "Linked session (outside date range)" } : null)}
+												onChange={(val) => setServerSessionId(val ? val._id : null)}
+												getOptionValue={(o) => o._id}
+												getOptionLabel={(o) => {
+													const date = o.startedAt ? moment(o.startedAt).format("MMM D HH:mm") : "";
+													const players = o.peakPlayerCount ? " · " + o.peakPlayerCount + "p" : "";
+													const mission = o.missionString || o.missionUniqueName || "Unknown";
+													return date ? date + " — " + mission + players : mission;
+												}}
+											/>
+										</div>
+									)}
+									</div>
+								)}
+							</div>
 							</div>
 
 							<div className="flex flex-row justify-between mt-4">
-								<button
-									type="button"
-									className="btn btn-sm"
-									onClick={() => {
-										onClose();
-									}}
-								>
-									Close
-								</button>
 								<div className="flex flex-row space-x-2">
+									<button
+										type="button"
+										className="btn btn-sm"
+										onClick={() => { onClose(); }}
+									>
+										Close
+									</button>
 									{historyToLoad && (
 										<button
 											type="button"
-											className={
-												isLoading
-													? "btn btn-sm btn-error loading"
-													: "btn btn-sm btn-error"
-											}
-											onClick={() => {
-												deleteHistory();
-											}}
+											className={isLoading ? "btn btn-sm btn-error loading" : "btn btn-sm btn-error"}
+											disabled={isLoading}
+											onClick={() => { deleteHistory(); }}
 										>
 											DELETE
 										</button>
 									)}
-									<button
-										type="button"
-										className={
-											isLoading
-												? "primary-btn-sm  loading"
-												: "primary-btn-sm "
-										}
-										onClick={() => {
-											addHistory();
-										}}
-									>
-										{historyToLoad ? "EDIT" : "SUMIT HISTORY"}
-									</button>
+								</div>
+								<div className="flex flex-row space-x-2">
+									{isReforger ? (
+										<>
+											<button
+												type="button"
+												className={isLoading ? "btn btn-sm btn-error loading" : "btn btn-sm btn-error"}
+												disabled={isLoading}
+												onClick={() => { addHistory(false); }}
+											>
+												Submit History
+											</button>
+											<button
+												type="button"
+												className={isLoading ? "btn btn-sm btn-success loading" : "btn btn-sm btn-success"}
+												disabled={isLoading || !selectedSession}
+												onClick={() => { addHistory(true); }}
+											>
+												Submit History &amp; Post to Discord
+											</button>
+										</>
+									) : (
+										<button
+											type="button"
+											className={isLoading ? "primary-btn-sm loading" : "primary-btn-sm"}
+											disabled={isLoading}
+											onClick={() => { addHistory(); }}
+										>
+											{historyToLoad ? "EDIT" : "SUBMIT HISTORY"}
+										</button>
+									)}
 								</div>
 							</div>
 						</div>

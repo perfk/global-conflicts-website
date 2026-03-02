@@ -23,7 +23,9 @@ const apiRoute = nextConnect({
  */
 apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
     const session = await getServerSession(req, res, authOptions);
-    if (!hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM])) {
+    // TEMPORARY: Mission Review Team has the same access as Arma GM until GMs
+    // are more familiar with the system. Remove CREDENTIAL.MISSION_REVIEWER when no longer needed.
+    if (!hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM, CREDENTIAL.MISSION_REVIEWER])) {
         return res.status(401).json({ error: "Not Authorized" });
     }
 

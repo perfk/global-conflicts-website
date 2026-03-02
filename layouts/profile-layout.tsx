@@ -24,6 +24,11 @@ export default function ProfileLayout({ children }) {
 			href: "/user/leadership-history",
 			current: router.pathname == "/user/leadership-history",
 		},
+		{
+			title: "My Play Sessions",
+			href: "/user/sessions",
+			current: router.pathname == "/user/sessions",
+		},
 	];
 
 	return (

@@ -6,6 +6,7 @@ import { hasCredsAny } from "../../lib/credsChecker";
 import { getServerSession } from "next-auth";
 import { authOptions } from "./auth/[...nextauth]";
 import axios from "axios";
+import { logReforgerAction, LOG_ACTION } from "../../lib/logging";
 
 const apiRoute = nextConnect({
 	onError(error, req: NextApiRequest, res: NextApiResponse) {
@@ -32,7 +33,9 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
 // POST: Refresh discord users from bot API and upsert into database
 apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 	const session = await getServerSession(req, res, authOptions);
-	if (!hasCredsAny(session, [CREDENTIAL.GM])) {
+	// TEMPORARY: Mission Review Team has the same access as Arma GM until GMs
+	// are more familiar with the system. Remove CREDENTIAL.MISSION_REVIEWER when no longer needed.
+	if (!hasCredsAny(session, [CREDENTIAL.GM, CREDENTIAL.MISSION_REVIEWER])) {
 		return res.status(401).json({ error: "Not Authorized" });
 	}
 
@@ -67,6 +70,12 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 
 		const result = await db.collection("discord_users").bulkWrite(ops);
 		const count = result.upsertedCount + result.modifiedCount;
+
+		await logReforgerAction(
+			LOG_ACTION.DISCORD_USERS_REFRESH,
+			{ count: botUsers.length, upserted: result.upsertedCount, updated: result.modifiedCount },
+			{ discord_id: session.user["discord_id"], username: session.user["username"] }
+		);
 
 		return res.status(200).json({
 			ok: true,

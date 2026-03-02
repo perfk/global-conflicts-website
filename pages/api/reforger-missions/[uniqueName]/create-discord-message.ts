@@ -6,6 +6,7 @@ import { hasCredsAny } from "../../../../lib/credsChecker";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 import { callBotPostMessage } from "../../../../lib/discordPoster";
+import { findReforgerMissionBySlug } from "../../../../lib/missionsHelpers";
 import { getCurrentThreadName } from "../../../../lib/sessionThread";
 
 const apiRoute = nextConnect({
@@ -31,10 +32,7 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 
     const db = (await MyMongo).db("prod");
 
-    const mission = await db.collection("reforger_missions").findOne(
-        { uniqueName },
-        { projection: { missionId: 1, uniqueName: 1, name: 1, type: 1, size: 1, descriptionNoMarkdown: 1, description: 1, authorID: 1, missionMaker: 1 } }
-    );
+    const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1, name: 1, type: 1, size: 1, descriptionNoMarkdown: 1, description: 1, authorID: 1, missionMaker: 1 });
     if (!mission) {
         return res.status(404).json({ error: "Mission not found" });
     }
@@ -58,7 +56,7 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 
     // Build the Discord post (same logic as load-mission.ts)
     const now = new Date();
-    const timestamp = now.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+    const unixTimestamp = Math.floor(now.getTime() / 1000);
     const missionLabel = `${mission.type} (${mission.size.min}-${mission.size.max}) ${mission.name}`;
     const websiteUrl = process.env.WEBSITE_URL ?? "https://globalconflicts.net";
     const loadedBy = session.user["nickname"] ?? session.user["username"] ?? "Unknown";
@@ -107,7 +105,8 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
     ];
     if (shortDesc) descLines.push(shortDesc);
     if (ratings.length > 0) descLines.push(`👍 ${pos}  🆗 ${neu}  👎 ${neg}`);
-    descLines.push(`[View on website](${websiteUrl}/reforger-missions/${mission.uniqueName})`);
+    descLines.push(`[View on website](${websiteUrl}/reforger-missions/${mission.missionId})`);
+    descLines.push(`Loaded by ${loadedBy}  •  <t:${unixTimestamp}:t>`);
 
     const discordResult = await callBotPostMessage({
         channelId: process.env.DISCORD_BOT_AAR_CHANNEL,
@@ -116,7 +115,6 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
         embed: {
             description: descLines.join("\n"),
             color: "#888888",
-            footer: `Loaded by ${loadedBy}  •  ${timestamp}`,
         },
     });
 
