@@ -22,6 +22,186 @@ interface GitHubTreeItem {
     url: string;
 }
 
+// --- Factions Parsing ---
+
+const UNITS_REPO_RAW_BASE = "https://raw.githubusercontent.com/Global-Conflicts-ArmA/gc-reforger-units/master";
+const factionConfigCache = new Map<string, any>();
+
+export async function extractMissionFactions(worldFolder: string, tree: GitHubTreeItem[], db: any): Promise<{ id: string; code: string; name: string; color?: string }[]> {
+    const prefix = worldFolder + '/';
+    const layerFiles = tree.filter(item =>
+        item.type === 'blob' &&
+        item.path.startsWith(prefix) &&
+        item.path.endsWith('.layer')
+    );
+
+    const configs = await db.collection("configs").findOne({}, { projection: { faction_mappings: 1 } });
+    const factionMappings: any[] = configs?.faction_mappings || [];
+    let mappingsUpdated = false;
+    
+    const headers = process.env.GITHUB_TOKEN ? { Authorization: `token ${process.env.GITHUB_TOKEN}` } : {};
+    const foundFactions = new Map<string, any>();
+
+    // 1. Fetch layer files to find group references
+    const layerContents = await Promise.all(
+        layerFiles.map(async f => {
+            try {
+                apiCallCount++;
+                const url = `${GITHUB_RAW_BASE}/${f.path}`;
+                const response = await axios.get(url, { headers, responseType: 'text' });
+                return { path: f.path, content: typeof response.data === 'string' ? response.data : JSON.stringify(response.data) };
+            } catch (e) {
+                console.warn(`[Faction] Could not fetch layer file ${f.path}: ${e.message}`);
+                return { path: f.path, content: "" };
+            }
+        })
+    );
+
+    // 2. Find all distinct NEW_FACTION codes from Prefabs/Groups/...
+    // Matches: Prefabs/Groups/{old_faction}/{NEW_FACTION}/..._P.et
+    const groupRegex = /Prefabs\/Groups\/[^/]+\/([^/]+)\/[^"]+_P\.et/gi;
+    for (const file of layerContents) {
+        if (!file.content) continue;
+        let match;
+        while ((match = groupRegex.exec(file.content)) !== null) {
+            const factionCode = match[1];
+            if (!foundFactions.has(factionCode)) {
+                foundFactions.set(factionCode, { code: factionCode, id: null, name: factionCode, color: null });
+            }
+        }
+    }
+
+    if (foundFactions.size === 0) return [];
+
+    const finalFactions = [];
+
+    // 3. Resolve faction metadata (Mapped -> GitHub -> Fallback)
+    for (const [factionCode, data] of Array.from(foundFactions.entries())) {
+        
+        // 3a. Check Database Mapper First
+        const mapped = factionMappings.find((m) => m.code === factionCode);
+        if (mapped && mapped.id) {
+            data.id = mapped.id;
+            data.name = mapped.name || factionCode;
+            data.color = mapped.color || null;
+            continue;
+        }
+
+        // 3b. Fallback to GitHub Configs
+        if (!factionConfigCache.has(factionCode)) {
+            try {
+                apiCallCount++;
+                const url = `${UNITS_REPO_RAW_BASE}/Configs/Factions/${factionCode}.conf`;
+                const response = await axios.get(url, { headers, responseType: 'text' });
+                const confContent = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+                
+                const idMatch = confContent.match(/UIInfo\s+SCR_FactionUIInfo\s+"{([A-F0-9]+)}"/i);
+                const nameMatch = confContent.match(/m_sNameUpper\s+"([^"]+)"/);
+                
+                // Color match e.g. FactionColor 0.502 0 0 1
+                let colorHex = null;
+                const colorMatch = confContent.match(/FactionColor\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+[\d.]+/);
+                if (colorMatch) {
+                    const r = Math.round(parseFloat(colorMatch[1]) * 255);
+                    const g = Math.round(parseFloat(colorMatch[2]) * 255);
+                    const b = Math.round(parseFloat(colorMatch[3]) * 255);
+                    colorHex = "#" + (1 << 24 | r << 16 | g << 8 | b).toString(16).slice(1).toUpperCase();
+                }
+                
+                factionConfigCache.set(factionCode, {
+                    id: idMatch ? idMatch[1].toUpperCase() : null,
+                    name: nameMatch ? nameMatch[1] : factionCode,
+                    color: colorHex
+                });
+            } catch (e) {
+                console.warn(`[Faction] Could not fetch unit config for ${factionCode}. Assumed vanilla/unavailable.`);
+                factionConfigCache.set(factionCode, null);
+            }
+        }
+
+        const cached = factionConfigCache.get(factionCode);
+        if (cached && cached.id) {
+            data.id = cached.id;
+            data.name = cached.name;
+            data.color = cached.color;
+            
+            // Auto-fill the database mapper
+            if (!mapped) {
+                factionMappings.push({
+                    code: factionCode,
+                    name: cached.name,
+                    id: cached.id,
+                    color: cached.color
+                });
+                mappingsUpdated = true;
+            }
+        } else {
+             // 3c. Unresolved Fallback - record it anyway so it shows up in the Admin Mapper UI
+             data.id = `UNRESOLVED_${factionCode}`; 
+             data.name = factionCode;
+        }
+    }
+
+    if (mappingsUpdated) {
+        await db.collection("configs").updateOne({}, { $set: { faction_mappings: factionMappings } }, { upsert: true });
+    }
+
+    // 4. Look for mission-specific overrides for each resolved faction ID
+    for (const [factionCode, data] of Array.from(foundFactions.entries())) {
+        if (!data.id || data.id.startsWith("UNRESOLVED_")) {
+            finalFactions.push({
+                id: data.id,
+                code: data.code,
+                name: data.name,
+                color: data.color || generateRandomColor(data.code)
+            });
+            continue;
+        }
+
+        let overrideName = null;
+        // Search layer files for "{ID}" ... m_sNameUpper "MissionSpecificName"
+        const regexStr = `"\\{${data.id}\\}"[\\s\\S]{1,150}?m_sNameUpper\\s+"([^"]+)"`;
+        const overrideRegex = new RegExp(regexStr, 'i');
+
+        for (const file of layerContents) {
+            if (!file.content) continue;
+            const match = file.content.match(overrideRegex);
+            if (match && match[1]) {
+                overrideName = match[1];
+                break; // Found override, no need to check other files
+            }
+        }
+        
+        finalFactions.push({
+            id: data.id,
+            code: data.code,
+            name: overrideName || data.name,
+            color: data.color || generateRandomColor(data.code)
+        });
+    }
+
+    // Deduplicate by ID
+    const distinctMap = new Map();
+    for (const f of finalFactions) {
+        distinctMap.set(f.id, f);
+    }
+
+    return Array.from(distinctMap.values());
+}
+
+function generateRandomColor(seedString: string): string {
+    let hash = 0;
+    for (let i = 0; i < seedString.length; i++) {
+        hash = seedString.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    let color = '#';
+    for (let i = 0; i < 3; i++) {
+        const value = (hash >> (i * 8)) & 0xFF;
+        color += ('00' + value.toString(16)).substr(-2);
+    }
+    return color;
+}
+
 // --- Briefing Parsing ---
 
 /**
@@ -305,7 +485,7 @@ export async function syncReforgerMissionsFromGitHub(isFullSync: boolean = false
     return results;
 }
 
-async function getFullRepoTree(): Promise<GitHubTreeItem[]> {
+export async function getFullRepoTree(): Promise<GitHubTreeItem[]> {
     const treeUrl = `${GITHUB_API_BASE}/git/trees/master?recursive=1`;
     apiCallCount++;
     console.log("[Tree API] Fetching full repo tree in a single call...");
@@ -705,28 +885,34 @@ async function syncSingleMission(db, path, sha, pr: any = null, guidToEntPathMap
             }
         }
 
-        // Extract and store briefing data (Mission Overview + Mission Notes) from layer files
+        // Extract and store briefing & faction data from layer files
         let briefing: { missionOverview?: string; missionNotes?: string } | undefined;
+        let factions: { id: string; code: string; name: string }[] | undefined;
+        
         if (tree) {
             const pathParts = path.split('/');
             if (pathParts.length >= 3) {
                 const worldFolder = `worlds/${pathParts[1]}/${pathParts[2].replace('.conf', '')}`;
                 try {
                     briefing = await extractMissionBriefing(worldFolder, tree);
-                    if (briefing.missionOverview !== undefined || briefing.missionNotes !== undefined) {
-                        const briefingUpdate: any = {};
-                        if (briefing.missionOverview !== undefined) briefingUpdate.missionOverview = briefing.missionOverview;
-                        if (briefing.missionNotes !== undefined) briefingUpdate.missionNotes = briefing.missionNotes;
+                    factions = await extractMissionFactions(worldFolder, tree, db);
+                    
+                    const metaUpdate: any = {};
+                    if (briefing?.missionOverview !== undefined) metaUpdate.missionOverview = briefing.missionOverview;
+                    if (briefing?.missionNotes !== undefined) metaUpdate.missionNotes = briefing.missionNotes;
+                    if (factions && factions.length > 0) metaUpdate.factions = factions;
+
+                    if (Object.keys(metaUpdate).length > 0) {
                         const docFilter = missionGuid ? { missionId: missionGuid } : { uniqueName: missionDoc.uniqueName };
-                        await db.collection("reforger_missions").updateOne(docFilter, { $set: briefingUpdate });
+                        await db.collection("reforger_missions").updateOne(docFilter, { $set: metaUpdate });
                     }
-                } catch (briefingError) {
-                    console.warn(`[Briefing] Failed to extract briefing for ${path}: ${briefingError.message}`);
+                } catch (dataError) {
+                    console.warn(`[Data Extraction] Failed to extract layer data for ${path}: ${dataError.message}`);
                 }
             }
         }
 
-        return { path, type: resultType, name: metadata.name, briefing };
+        return { path, type: resultType, name: metadata.name, briefing, factions };
     } catch (error) {
         fs.appendFileSync("sync_errors.log", `Error syncing ${path}: ${error.message}\n`);
         return { path, error: error.message };
@@ -738,7 +924,7 @@ async function getOldestCommitDate(path: string, headers: object): Promise<Date 
     try {
         const commitsUrl = `${GITHUB_API_BASE}/commits?path=${encodeURIComponent(path)}&per_page=1`;
         apiCallCount++;
-        const commitsResponse = await axios.get(commitsUrl, { headers });
+        const commitsResponse = await axios.get(commitsUrl, { headers: headers as any });
 
         const linkHeader = commitsResponse.headers?.link || "";
         const lastPageMatch = linkHeader.match(/<([^>]+)>;\s*rel="last"/);
@@ -746,7 +932,7 @@ async function getOldestCommitDate(path: string, headers: object): Promise<Date 
         if (lastPageMatch) {
             // Multiple commits — fetch the last page to get the oldest
             apiCallCount++;
-            const oldestResponse = await axios.get(lastPageMatch[1], { headers });
+            const oldestResponse = await axios.get(lastPageMatch[1], { headers: headers as any });
             if (oldestResponse.data?.length > 0) {
                 return new Date(oldestResponse.data[0].commit.committer.date);
             }

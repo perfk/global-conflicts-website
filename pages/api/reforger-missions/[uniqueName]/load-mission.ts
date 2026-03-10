@@ -12,6 +12,7 @@ import {
     callBotPostMessage,
 } from "../../../../lib/discordPoster";
 import { getCurrentThreadName } from "../../../../lib/sessionThread";
+import { ObjectId } from "bson";
 
 const apiRoute = nextConnect({
     onError(error, req: NextApiRequest, res: NextApiResponse) {
@@ -78,22 +79,23 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 
     // ── Optionally post to Discord ──
     let discordResult: { messageId: string; threadId: string } | null = null;
+    let discordMessageUrl: string | null = null;
+    const unixTimestamp = Math.floor(now.getTime() / 1000);
+    const websiteUrl = process.env.WEBSITE_URL ?? "https://globalconflicts.net";
+    const threadName = getCurrentThreadName();
+
+    const configs = await db
+        .collection("configs")
+        .findOne({}, { projection: { activeSession: 1, author_mappings: 1 } });
+    const existingSession = configs?.activeSession;
 
     if (postToDiscord && process.env.DISCORD_BOT_AAR_CHANNEL) {
         try {
             // Resolve existing thread for today's session (if any)
-            const configs = await db
-                .collection("configs")
-                .findOne({}, { projection: { activeSession: 1, author_mappings: 1 } });
-            const threadName = getCurrentThreadName();
-            const existingSession = configs?.activeSession;
             const threadId =
                 existingSession?.threadName === threadName
                     ? existingSession.threadId
                     : null;
-
-            const unixTimestamp = Math.floor(now.getTime() / 1000);
-            const websiteUrl = process.env.WEBSITE_URL ?? "https://globalconflicts.net";
 
             // Fetch author name and metadata in parallel
             const [authorUser, metadata] = await Promise.all([
@@ -137,66 +139,92 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
             descLines.push(`Loaded by ${loadedBy}  •  <t:${unixTimestamp}:t>`);
 
             discordResult = await callBotPostMessage({
-                channelId: process.env.DISCORD_BOT_AAR_CHANNEL,
-                threadName,
-                threadId,
+                channelId: process.env.DISCORD_BOT_AAR_CHANNEL as string,
+                threadName: threadName,
+                threadId: threadId,
                 embed: {
                     description: descLines.join("\n"),
-                    color: "#888888",
-                    footer: "",
+                    color: "#f59e0b",
                 },
             });
 
-            // Persist active session and append to session history log
             const guildId = process.env.DISCORD_GUILD_ID;
-            const discordMessageUrl = guildId
+            discordMessageUrl = guildId && discordResult
                 ? `https://discord.com/channels/${guildId}/${discordResult.threadId}/${discordResult.messageId}`
                 : null;
-            await db.collection("configs").updateOne(
-                {},
-                {
-                    $set: {
-                        activeSession: {
-                            threadId: discordResult.threadId,
-                            threadName,
-                            messageId: discordResult.messageId,
-                            uniqueName: mission.uniqueName,
-                            missionName: mission.name,
-                            loadedBy,
-                            loadedByDiscordId,
-                            startedAt: now,
-                        },
-                    },
-                    $push: {
-                        sessionHistory: {
-                            $each: [{
-                                uniqueName: mission.uniqueName,
-                                missionName: mission.name,
-                                messageId: discordResult.messageId,
-                                threadId: discordResult.threadId,
-                                discordMessageUrl,
-                                loadedAt: now,
-                            }],
-                            $slice: -20,
-                        } as any,
-                    },
-                },
-                { upsert: true }
-            );
         } catch (err) {
             console.error("Discord post error:", err);
             // Not fatal — log and continue
         }
     }
 
-    // ── Close any open server session (load event = clean boundary) ──
+    // ── Create server session placeholder (load event) ──
+    const sessionPlaceholder = {
+        startedAt: now,
+        endedAt: null, // Keep open so the bot can adopt it
+        missionString: missionLabel,
+        missionUniqueName: mission.uniqueName,
+        snapshots: [],
+        peakPlayerCount: 0,
+        endReason: "load_event",
+        isPlaceholder: true,
+        missionLinkSource: "manual",
+        // Store Discord link directly on the session
+        discordMessageId: discordResult?.messageId ?? null,
+        discordThreadId: discordResult?.threadId ?? null,
+        discordMessageUrl: discordMessageUrl,
+    };
+    const sessionResult = await db.collection("server_sessions").insertOne(sessionPlaceholder);
+
+    // Persist active session and append to session history log
+    const sessionHistoryEntry = {
+        uniqueName: mission.uniqueName,
+        missionName: mission.name,
+        messageId: discordResult?.messageId ?? null,
+        threadId: discordResult?.threadId ?? null,
+        discordMessageUrl,
+        loadedAt: now,
+    };
+
+    await db.collection("configs").updateOne(
+        {},
+        {
+            $set: {
+                activeSession: {
+                    // If no discord post, we still preserve the threadId if it exists from previous sessions
+                    // so future posts today can reuse the thread.
+                    threadId: discordResult?.threadId ?? existingSession?.threadId ?? null,
+                    threadName,
+                    messageId: discordResult?.messageId ?? null,
+                    uniqueName: mission.uniqueName,
+                    missionName: mission.name,
+                    loadedBy,
+                    loadedByDiscordId,
+                    startedAt: now,
+                },
+            },
+            $push: {
+                sessionHistory: {
+                    $each: [sessionHistoryEntry],
+                    $slice: -20,
+                } as any,
+            },
+        },
+        { upsert: true }
+    );
+
+    // ── Close any PREVIOUS open server sessions ──
+    // (Excluding the one we just created)
     try {
         await db.collection("server_sessions").updateMany(
-            { endedAt: null },
+            { 
+                endedAt: null, 
+                _id: { $ne: sessionResult.insertedId } 
+            },
             { $set: { endedAt: now, endReason: "load_event" } }
         );
     } catch (err) {
-        console.error("Session close on load failed (non-fatal):", err);
+        console.error("Previous session close failed:", err);
     }
 
     // ── Audit log ──

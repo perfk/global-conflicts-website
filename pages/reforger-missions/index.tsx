@@ -32,8 +32,8 @@ import { REVIEW_STATE_ACCEPTED, REVIEW_STATE_PENDING } from '../../lib/reviewSta
 import axios from "axios";
 import { toast } from "react-toastify";
 import { useRouter } from "next/router";
+import Link from "next/link";
 import AdminControlsModal from "../../components/modals/admin_controls_modal";
-import GmControlsModal from "../../components/modals/gm_controls_modal";
 import { calculateMissionScore, DEFAULT_SMART_CONFIG, SmartScoreConfig } from "../../lib/missionSmartScoring";
 
 import dynamic from "next/dynamic";
@@ -171,7 +171,6 @@ function ReforgerMissionList({ missions }) {
 	const [isSyncing, setIsSyncing] = useState(false);
     const [showAllData, setShowAllData] = useState(false);
     const [adminModalOpen, setAdminModalOpen] = useState(false);
-    const [gmModalOpen, setGmModalOpen] = useState(false);
 	const router = useRouter();
 
 	const [denseMode, setDenseMode] = useState(false)
@@ -1638,13 +1637,10 @@ function ReforgerMissionList({ missions }) {
 									{/* TEMPORARY: Mission Review Team has the same access as Arma GM until GMs
 									    are more familiar with the system. Remove CREDENTIAL.MISSION_REVIEWER when no longer needed. */}
 									{hasCredsAny(session, [CREDENTIAL.GM, CREDENTIAL.ADMIN, CREDENTIAL.MISSION_REVIEWER]) && (
-										<button
-											onClick={() => setGmModalOpen(true)}
-											className="btn btn-sm btn-secondary"
-										>
+										<Link href="/staff/server-sessions" className="btn btn-sm btn-secondary">
 											<UserGroupIcon className="w-4 h-4 mr-2" />
 											GM Controls
-										</button>
+										</Link>
 									)}
 									{hasCredsAny(session, [CREDENTIAL.MISSION_REVIEWER, CREDENTIAL.ADMIN]) && (
 										<button
@@ -1694,11 +1690,6 @@ function ReforgerMissionList({ missions }) {
 									runSync(false, date);
 									setAdminModalOpen(false);
 								}}
-							/>
-
-							<GmControlsModal
-								isOpen={gmModalOpen}
-								onClose={() => setGmModalOpen(false)}
 							/>
 
 							{/* Smart Sort Config Panel (moved here) */}
@@ -2054,12 +2045,27 @@ export async function getServerSideProps() {
 				votes: { $ifNull: ["$_meta.votes", []] },
 				lastPlayed: {
 					$ifNull: [
-						{ $max: { $map: { input: { $ifNull: ["$_meta.history", []] }, as: "h", in: "$$h.date" } } },
+						{ $max: { $map: { 
+							input: { $filter: {
+								input: { $ifNull: ["$_meta.history", []] },
+								as: "h",
+								cond: { $ne: ["$$h.isSkeleton", true] }
+							} }, 
+							as: "h", 
+							in: "$$h.date" 
+						} } },
 						"$_meta.lastPlayed"
 					]
 				},
 				missionGroup: { $ifNull: ["$_meta.missionGroup", null] },
-				playCount: { $add: [{ $ifNull: ["$_meta.manualPlayCount", 0] }, { $size: { $ifNull: ["$_meta.history", []] } }] },
+				playCount: { $add: [
+					{ $ifNull: ["$_meta.manualPlayCount", 0] }, 
+					{ $size: { $filter: {
+						input: { $ifNull: ["$_meta.history", []] },
+						as: "h",
+						cond: { $ne: ["$$h.isSkeleton", true] }
+					} } }
+				] },
                 rating: {
                     $avg: {
                         $map: {

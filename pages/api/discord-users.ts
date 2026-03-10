@@ -26,8 +26,22 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
 	}
 
 	const db = (await MyMongo).db("prod");
-	const users = await db.collection("discord_users").find({}).toArray();
-	return res.status(200).json(users);
+	const [users, leadershipStats] = await Promise.all([
+		db.collection("discord_users").find({}).toArray(),
+		db.collection("reforger_mission_metadata").aggregate([
+			{ $unwind: "$history" },
+			{ $unwind: "$history.leaders" },
+			{ $group: { _id: "$history.leaders.discordID", count: { $sum: 1 } } }
+		]).toArray()
+	]);
+
+	const statsMap = new Map(leadershipStats.map(s => [s._id, s.count]));
+	const enrichedUsers = users.map(u => ({
+		...u,
+		leadershipCount: statsMap.get(u.userId) ?? 0
+	}));
+
+	return res.status(200).json(enrichedUsers);
 });
 
 // POST: Refresh discord users from bot API and upsert into database

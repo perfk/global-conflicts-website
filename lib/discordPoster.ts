@@ -138,3 +138,17 @@ export async function callBotEditMessage(body: {
 	const response = await axios.post(`${BOT_URL}/server/edit-discord-message`, body, { timeout: 15000 });
 	return response.data;
 }
+
+/**
+ * Tell the bot to post a feedback message to the designated feedback channel.
+ */
+export async function postMissionFeedback(body: {
+	missionName: string;
+	status: string;
+	notes: string;
+	author: string;
+	missionMaker?: string;
+}) {
+	const channelId = process.env.NODE_ENV === "production" ? "745428624408051872" : "1480878310002135174";
+	await axios.post(`${BOT_URL}/server/post-feedback`, { ...body, channelId }, { timeout: 15000 });
+}

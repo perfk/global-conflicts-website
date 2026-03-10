@@ -11,6 +11,21 @@ export default async function handler(req, res) {
 			},
 		},
 		{
+			$lookup: {
+				from: "reforger_mission_metadata",
+				localField: "missionId",
+				foreignField: "missionId",
+				as: "metadata",
+			},
+		},
+		{
+			$addFields: {
+				historyCount: { $size: { $ifNull: [{ $arrayElemAt: ["$metadata.history", 0] }, []] } },
+				status: { $arrayElemAt: ["$metadata.status", 0] },
+				statusNotes: { $arrayElemAt: ["$metadata.statusNotes", 0] }
+			}
+		},
+		{
 			$project: {
 				image: 0,
 				reviewChecklist: 0,
@@ -18,6 +33,7 @@ export default async function handler(req, res) {
 				history: 0,
 				updates: 0,
 				reports: 0,
+				metadata: 0,
 			},
 		},
 	]).toArray();

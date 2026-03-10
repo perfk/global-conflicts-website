@@ -866,14 +866,13 @@ export default function MissionDetails({
     revalidateOnFocus: false,
   });
   function getHistory() {
-    if (historyError) {
-      return mission.history;
+    let list = [];
+    if (historyError || history?.error) {
+      list = mission.history ?? [];
+    } else {
+      list = history || mission.history || [];
     }
-    if (history?.error) {
-      return mission.history;
-    }
-
-    return history || mission.history;
+    return list.filter(h => !h.isSkeleton);
   }
 
   const {

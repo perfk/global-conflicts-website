@@ -18,6 +18,122 @@ interface DiscordUserOption {
     username?: string;
 }
 
+// --- Faction Mapper ---
+
+function FactionMapper() {
+    const [isLoading, setIsLoading] = useState(true);
+    const [codes, setCodes] = useState<string[]>([]);
+    const [savedMappings, setSavedMappings] = useState<any[]>([]);
+    const [editStates, setEditStates] = useState<Record<string, { name: string; id: string; color: string }>>({});
+
+    async function fetchData() {
+        setIsLoading(true);
+        try {
+            const res = await axios.get("/api/reforger-missions/factions");
+            const { codes: codeList, mappings } = res.data;
+            setCodes(codeList);
+            setSavedMappings(mappings);
+
+            const map: Record<string, { name: string; id: string; color: string }> = {};
+            codeList.forEach((code: string) => {
+                const existing = mappings.find((m: any) => m.code === code);
+                map[code] = existing ? { name: existing.name || "", id: existing.id || "", color: existing.color || "" } : { name: "", id: "", color: "" };
+            });
+            setEditStates(map);
+        } catch (error) {
+            toast.error("Failed to fetch faction mapping data.");
+            console.error(error);
+        } finally {
+            setIsLoading(false);
+        }
+    }
+
+    useEffect(() => { fetchData(); }, []);
+
+    const handleSave = async (code: string) => {
+        const state = editStates[code];
+        try {
+            await axios.post("/api/reforger-missions/factions", { code, ...state });
+            toast.success(`Mapping for "${code}" saved.`);
+            fetchData();
+        } catch (error) {
+            toast.error("Failed to save mapping.");
+            console.error(error);
+        }
+    };
+
+    if (isLoading) return <Spinner />;
+
+    return (
+        <div className="bg-gray-100 dark:bg-gray-700/50 p-3 rounded-lg mt-2 text-sm max-h-96 overflow-y-auto">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                Map custom faction codes (from .layer files) to standard names and colors. 
+                Auto-synced factions (resolved via GitHub) will naturally appear here as unmapped unless you explicitly override them.
+            </p>
+            <div className="flex flex-col gap-3">
+                {codes.length === 0 ? (
+                    <div className="text-gray-500 italic">No custom factions found in any missions yet.</div>
+                ) : (
+                    codes.map(code => {
+                        const saved = savedMappings.find(m => m.code === code);
+                        const currentState = editStates[code] || { name: "", id: "", color: "" };
+                        const hasChanged = currentState.name !== (saved?.name || "") || 
+                                           currentState.id !== (saved?.id || "") ||
+                                           currentState.color !== (saved?.color || "");
+
+                        return (
+                            <div key={code} className="bg-white dark:bg-gray-800 p-3 rounded shadow-sm border border-gray-200 dark:border-gray-600">
+                                <div className="font-mono text-xs font-bold mb-2 break-all text-gray-800 dark:text-gray-200">{code}</div>
+                                <div className="flex flex-col gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="Display Name"
+                                        className="input input-bordered input-sm w-full dark:text-gray-200"
+                                        value={currentState.name}
+                                        onChange={(e) => setEditStates({...editStates, [code]: {...currentState, name: e.target.value }})}
+                                    />
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            placeholder="Faction GUID (optional)"
+                                            className="input input-bordered input-sm flex-1 dark:text-gray-200 font-mono"
+                                            value={currentState.id}
+                                            onChange={(e) => setEditStates({...editStates, [code]: {...currentState, id: e.target.value }})}
+                                        />
+                                        <input
+                                            type="color"
+                                            className="input input-bordered input-sm w-12 p-1"
+                                            value={currentState.color || "#000000"}
+                                            onChange={(e) => setEditStates({...editStates, [code]: {...currentState, color: e.target.value }})}
+                                        />
+                                    </div>
+                                </div>
+                                <div className="flex justify-end mt-2">
+                                    <button
+                                        className="btn btn-sm btn-primary"
+                                        onClick={() => handleSave(code)}
+                                        disabled={!hasChanged}
+                                    >
+                                        Save
+                                    </button>
+                                </div>
+                            </div>
+                        )
+                    })
+                )}
+            </div>
+             <button
+                className="btn btn-xs btn-ghost mt-2"
+                onClick={fetchData}
+            >
+                <RefreshIcon className="w-4 h-4 mr-1"/>
+                Refresh List
+            </button>
+        </div>
+    );
+}
+
+
 function AuthorMapper() {
     const [isLoading, setIsLoading] = useState(true);
     const [authors, setAuthors] = useState<string[]>([]);
@@ -251,6 +367,76 @@ function TerrainMapper() {
 }
 
 
+// --- Bot Config ---
+
+function BotConfigMapper() {
+    const [isLoading, setIsLoading] = useState(true);
+    const [intervalMs, setIntervalMs] = useState(120000);
+    const [isSaving, setIsSaving] = useState(false);
+
+    async function fetchData() {
+        setIsLoading(true);
+        try {
+            const res = await axios.get("/api/bot-config");
+            setIntervalMs(res.data.intervalMs);
+        } catch (error) {
+            toast.error("Failed to fetch bot config data.");
+            console.error(error);
+        } finally {
+            setIsLoading(false);
+        }
+    }
+
+    useEffect(() => { fetchData(); }, []);
+
+    const handleSave = async () => {
+        setIsSaving(true);
+        try {
+            await axios.post("/api/bot-config", { intervalMs });
+            toast.success("Bot poll interval updated.");
+            fetchData();
+        } catch (error) {
+            toast.error("Failed to update bot interval.");
+            console.error(error);
+        } finally {
+            setIsSaving(false);
+        }
+    };
+
+    if (isLoading) return <Spinner />;
+
+    return (
+        <div className="bg-gray-100 dark:bg-gray-700/50 p-4 rounded-lg mt-2 text-sm">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                Set how often the Discord bot polls the Arma server for player stats. 
+                A lower number updates quicker but uses more CPU. Default is 120000 ms (2 minutes). Minimum is 5000 ms.
+            </p>
+            <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-2">
+                    <label className="label-text">Poll Interval (Milliseconds)</label>
+                    <div className="flex gap-2">
+                        <input
+                            type="number"
+                            placeholder="120000"
+                            className="input input-bordered input-sm flex-1 dark:text-gray-200 font-mono"
+                            value={intervalMs}
+                            onChange={(e) => setIntervalMs(parseInt(e.target.value))}
+                            min={5000}
+                        />
+                        <button
+                            className={`btn btn-sm btn-primary ${isSaving ? 'loading' : ''}`}
+                            onClick={handleSave}
+                            disabled={isSaving || intervalMs < 5000}
+                        >
+                            Save
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function AdminControlsModal({
 	isOpen,
 	onClose,
@@ -266,6 +452,8 @@ export default function AdminControlsModal({
     const [isFixingSlugs, setIsFixingSlugs] = useState(false);
     const [showTerrainMapper, setShowTerrainMapper] = useState(false);
     const [showAuthorMapper, setShowAuthorMapper] = useState(false);
+    const [showFactionMapper, setShowFactionMapper] = useState(false);
+    const [showBotConfig, setShowBotConfig] = useState(false);
     const [syncMissionUrl, setSyncMissionUrl] = useState('');
     const [isSyncingMission, setIsSyncingMission] = useState(false);
     const [isBackfillingBriefings, setIsBackfillingBriefings] = useState(false);
@@ -466,10 +654,10 @@ export default function AdminControlsModal({
                                 </div>
                                 )}
 
-                                {/* Section 4: Terrain Management */}
+                                {/* Section 4: Mappers & Config */}
                                 {hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.MISSION_REVIEWER]) && (
                                 <div className="pt-4 border-t dark:border-gray-700">
-                                     <h4 className="font-semibold text-sm mb-2 uppercase tracking-wide opacity-70">Terrain Management</h4>
+                                     <h4 className="font-semibold text-sm mb-2 uppercase tracking-wide opacity-70">Mappers & Config</h4>
                                     <button
                                         className="btn btn-block btn-secondary justify-between"
                                         onClick={() => setShowTerrainMapper(!showTerrainMapper)}
@@ -486,6 +674,22 @@ export default function AdminControlsModal({
                                         {showAuthorMapper ? <ChevronUpIcon className="w-5 h-5"/> : <ChevronDownIcon className="w-5 h-5"/>}
                                     </button>
                                     {showAuthorMapper && <AuthorMapper />}
+                                    <button
+                                        className="btn btn-block btn-secondary justify-between mt-2"
+                                        onClick={() => setShowFactionMapper(!showFactionMapper)}
+                                    >
+                                        Faction Mapper
+                                        {showFactionMapper ? <ChevronUpIcon className="w-5 h-5"/> : <ChevronDownIcon className="w-5 h-5"/>}
+                                    </button>
+                                    {showFactionMapper && <FactionMapper />}
+                                    <button
+                                        className="btn btn-block btn-secondary justify-between mt-2"
+                                        onClick={() => setShowBotConfig(!showBotConfig)}
+                                    >
+                                        Bot Config
+                                        {showBotConfig ? <ChevronUpIcon className="w-5 h-5"/> : <ChevronDownIcon className="w-5 h-5"/>}
+                                    </button>
+                                    {showBotConfig && <BotConfigMapper />}
                                 </div>
                                 )}
 
@@ -502,11 +706,27 @@ export default function AdminControlsModal({
                                                 Backfill Mission Briefings
                                             </button>
                                             <button
-                                                disabled={isFixingDates || isSyncing}
+                                                disabled={isFixingDates}
                                                 onClick={handleFixUploadDates}
-                                                className={`btn btn-warning btn-outline w-full ${isFixingDates ? 'loading' : ''}`}
+                                                className={`btn btn-warning w-full btn-sm ${isFixingDates ? 'loading' : ''}`}
                                             >
-                                                Fix Mission Upload Dates
+                                                Fix Upload Dates
+                                            </button>
+                                            <button
+                                                disabled={isFixingDates}
+                                                onClick={async () => {
+                                                    if (!confirm("This will scan all mission layer files to extract and update faction data. It may take a minute. Continue?")) return;
+                                                    try {
+                                                        toast.info("Syncing all factions...");
+                                                        const res = await axios.post("/api/reforger-missions/sync-factions");
+                                                        toast.success(`Factions synced: ${res.data.updated} updated, ${res.data.skipped} skipped, ${res.data.errors} errors.`);
+                                                    } catch (e: any) {
+                                                        toast.error("Faction sync failed: " + (e.response?.data?.error || e.message));
+                                                    }
+                                                }}
+                                                className="btn btn-warning w-full btn-sm"
+                                            >
+                                                Sync All Factions
                                             </button>
                                             <button
                                                 disabled={isFixingSlugs || isSyncing}

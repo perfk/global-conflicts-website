@@ -43,7 +43,7 @@ export default function ProfileLayout({ children }) {
 										<div>
 											<Link href={`/${btn.href}`} legacyBehavior>
 
-												<div className={`p-4 mb-4 text-sm ${btn.current ? "font-medium" : "font-normal"} text-gray-800 rounded-lg cursor-pointer  `}>
+												<div className={`p-4 mb-4 text-sm ${btn.current ? "font-bold text-primary dark:text-primary" : "font-normal text-gray-800 dark:text-gray-200"} rounded-lg cursor-pointer  `}>
 													{btn.current && "• "}
 													{btn["title"]}
 												</div>

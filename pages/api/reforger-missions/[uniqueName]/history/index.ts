@@ -115,6 +115,11 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
 	);
 
 	if (metadata && metadata["history"]) {
+		// Filter out skeletons for non-privileged users
+		if (!isAdmin) {
+			metadata["history"] = metadata["history"].filter((h: any) => !h.isSkeleton);
+		}
+
 		metadata["history"].sort((a, b) => {
 			return new Date(b.date).getTime() - new Date(a.date).getTime();
 		});
@@ -154,6 +159,9 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 	const history = req.body;
 	history["_id"] = new ObjectId(history["_id"]);
 	history["date"] = new Date(history["date"]);
+    if (history["serverSessionId"]) {
+        history["serverSessionId"] = new ObjectId(history["serverSessionId"]);
+    }
 	const session = await getServerSession(req, res, authOptions);
 	// TEMPORARY: Mission Review Team has the same access as Arma GM until GMs
 	// are more familiar with the system. Remove CREDENTIAL.MISSION_REVIEWER when no longer needed.
@@ -170,31 +178,14 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 
 	const missionId = mission.missionId || mission.uniqueName;
 
-	// Link to the most recent server session for this mission (within the last 24 h).
-	// Non-fatal: a failure here must never block the AAR submission.
-	try {
-		const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
-		const matchedSession = await db.collection("server_sessions").findOne(
-			{
-				missionUniqueName: String(uniqueName),
-				$or: [{ endedAt: null }, { endedAt: { $gte: cutoff } }],
-			},
-			{ sort: { startedAt: -1 }, projection: { _id: 1 } }
-		);
-		history["serverSessionId"] = matchedSession?._id ?? null;
-	} catch (err) {
-		console.error("Session lookup failed (non-fatal):", err);
-		history["serverSessionId"] = null;
-	}
-
-	const updateResult = await db.collection("reforger_mission_metadata").updateOne(
-		{ missionId: missionId },
-		{
-			$addToSet: { history: history },
-			$set: { lastPlayed: history["date"] },
-		},
-		{ upsert: true }
-	);
+    const updateResult = await db.collection("reforger_mission_metadata").updateOne(
+        { missionId: missionId },
+        {
+            $addToSet: { history: history },
+            $set: { lastPlayed: history["date"] },
+        },
+        { upsert: true }
+    );
 
     if (updateResult.modifiedCount > 0 || updateResult.upsertedCount > 0) {
         const metadata = await db.collection("reforger_mission_metadata").findOne({ missionId: missionId });
