@@ -3,6 +3,7 @@ import nextConnect from "next-connect";
 import MyMongo from "../../../../lib/mongodb";
 import { getSession } from "next-auth/react";
 import { postFirstvoteForAMission } from "../../../../lib/discordPoster";
+import { findReforgerMissionBySlug } from "../../../../lib/missionsHelpers";
 import axios from "axios";
 
 const apiRoute = nextConnect({
@@ -38,9 +39,7 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
 		});
 	}
 
-	const mission = await db.collection("reforger_missions").findOne({
-		uniqueName: uniqueName,
-	});
+	const mission = await findReforgerMissionBySlug(db, String(uniqueName));
 
 	if (!mission) {
 		return res.status(404).json({ error: "Mission not found" });
@@ -110,10 +109,7 @@ apiRoute.delete(async (req: NextApiRequest, res: NextApiResponse) => {
 	}
 
 	const db = (await MyMongo).db("prod");
-	const mission = await db.collection("reforger_missions").findOne(
-		{ uniqueName: uniqueName },
-		{ projection: { missionId: 1, uniqueName: 1 } }
-	);
+	const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1 });
 	if (!mission) {
 		return res.status(404).json({ error: "Mission not found" });
 	}
@@ -139,10 +135,7 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
 	}
 
 	const db = (await MyMongo).db("prod");
-	const mission = await db.collection("reforger_missions").findOne(
-		{ uniqueName: uniqueName },
-		{ projection: { missionId: 1, uniqueName: 1 } }
-	);
+	const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1 });
 	if (!mission) {
 		return res.status(200).json({ hasVoted: false });
 	}

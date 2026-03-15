@@ -6,6 +6,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "../../../../auth/[...nextauth]";
 import { CREDENTIAL } from "../../../../../../middleware/check_auth_perms";
 import { hasCredsAny } from "../../../../../../lib/credsChecker";
+import { findReforgerMissionBySlug } from "../../../../../../lib/missionsHelpers";
 
 const apiRoute = nextConnect({
     onError(error, req: NextApiRequest, res: NextApiResponse) {
@@ -25,10 +26,7 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
     const body = req.body;
 
     const db = (await MyMongo).db("prod");
-    const mission = await db.collection("reforger_missions").findOne(
-        { uniqueName: uniqueName },
-        { projection: { missionId: 1, uniqueName: 1, authorID: 1 } }
-    );
+    const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1, authorID: 1 });
     if (!mission) {
         return res.status(404).json({ error: "Mission not found" });
     }

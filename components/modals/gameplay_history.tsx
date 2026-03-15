@@ -16,7 +16,7 @@ import NumberFormat from "react-number-format";
 import moment from "moment";
 import axios from "axios";
 import { toast } from "react-toastify";
-import { ObjectID } from "bson";
+import { ObjectId } from "bson";
 import { generateMarkdown } from "../../lib/markdownToHtml";
 
 export default function GameplayHistoryModal({
@@ -26,6 +26,7 @@ export default function GameplayHistoryModal({
 	mission,
 	historyToLoad,
     isReforger = false,
+    historyCount = 0,
 }) {
 	const [gmNote, setGmNote] = React.useState("");
 	const [selectedNoteTab, setSelectedNoteTab] = React.useState<
@@ -42,17 +43,25 @@ export default function GameplayHistoryModal({
 		name: "User not on Discord"
 	};
 
-	let [listOfLeaders, setListOfLeaders] = useState([]);
+	let [listOfLeaders, setListOfLeaders] = useState<any[]>([
+		{ userId: null, name: "", role: { value: "leader", label: "Leader" }, side: null, aar: null, displayAvatarURL: null }
+	]);
 	let [outcome, setOutcome] = useState(null);
 
+	const sortedDiscordUsers = React.useMemo(() => {
+		if (!discordUsers) return [];
+		return [...discordUsers].sort((a, b) => (b.leadershipCount ?? 0) - (a.leadershipCount ?? 0));
+	}, [discordUsers]);
+
 	const addLeader = (leader) => {
-		setListOfLeaders([...listOfLeaders, leader]);
+		setListOfLeaders([...listOfLeaders, { ...leader, role: { value: "leader", label: "Leader" } }]);
 	};
 	const [dateObj, setDateObj] = useState(new Date());
 	const [dateString, setDateString] = useState(moment().format("DD/MM/YYYY"));
 	const [dateError, setDateError] = useState("");
 	const [isLoading, setIsLoading] = useState(false);
 	const [aarReplayLink, setAARReplayLink] = useState("");
+	const [showAdvanced, setShowAdvanced] = useState(false);
 
 	// Session selector + timestamps (Reforger only)
 	const [sessionHistory, setSessionHistory] = useState<any[]>([]);
@@ -60,6 +69,12 @@ export default function GameplayHistoryModal({
 	const [sessionStartedAt, setSessionStartedAt] = useState("");
 	const [sessionEndedAt, setSessionEndedAt] = useState("");
 	const [isCreatingDiscordMessage, setIsCreatingDiscordMessage] = useState(false);
+
+	// Server session link (Reforger only — preserved on edit, changeable by GM)
+	const [serverSessionId, setServerSessionId] = useState<string | null>(null);
+	const [nearSessions, setNearSessions] = useState<any[]>([]);
+	const [nearSessionsLoading, setNearSessionsLoading] = useState(false);
+
 
 	function toDatetimeLocal(date: Date): string {
 		const pad = (n: number) => String(n).padStart(2, "0");
@@ -80,16 +95,19 @@ export default function GameplayHistoryModal({
 					setSelectedSession(existing);
 				}
 				toast.info("A Discord post already exists for this mission — selected it for you.");
+				return existing || entry;
 			} else {
 				// New post created — add to local history and select it
 				const newEntry = { ...entry, loadedAt: new Date(entry.loadedAt) };
 				setSessionHistory((prev) => [...prev, newEntry]);
 				setSelectedSession(newEntry);
 				toast.success("Discord post created successfully.");
+				return newEntry;
 			}
 		} catch (err: any) {
 			const msg = err?.response?.data?.error ?? "Failed to create Discord post.";
 			toast.error(msg);
+			throw err;
 		} finally {
 			setIsCreatingDiscordMessage(false);
 		}
@@ -118,6 +136,29 @@ export default function GameplayHistoryModal({
 			.catch(() => setSessionHistory([]));
 	}, [isOpen, isReforger]);
 
+	// Fetch server sessions near the entry date so the GM can change/clear the link
+	useEffect(() => {
+		if (!isOpen || !isReforger) return;
+		const start = new Date(dateObj);
+		start.setDate(start.getDate() - 7);
+		const end = new Date(dateObj);
+		end.setDate(end.getDate() + 1);
+		setNearSessionsLoading(true);
+		axios
+			.get("/api/server-sessions", {
+				params: { startDate: start.toISOString(), endDate: end.toISOString(), limit: 50 },
+			})
+			.then((r) => {
+				const sessions = (r.data.sessions ?? []).map((s: any) => ({
+					...s,
+					_id: typeof s._id === "object" ? s._id.toString() : String(s._id),
+				}));
+				setNearSessions(sessions);
+			})
+			.catch(() => setNearSessions([]))
+			.finally(() => setNearSessionsLoading(false));
+	}, [isOpen, isReforger]);
+
 	// When editing an existing entry, match its stored discordMessageId to session history
 	useEffect(() => {
 		if (!isReforger || !historyToLoad) return;
@@ -131,7 +172,7 @@ export default function GameplayHistoryModal({
 					messageId: historyToLoad.discordMessageId,
 					threadId: historyToLoad.discordThreadId ?? null,
 					discordMessageUrl: historyToLoad.discordMessageUrl ?? null,
-					missionName: mission?.name ?? "Previous session",
+					missionName: mission?.name ?? "Linked session",
 					loadedAt: historyToLoad.date,
 					_synthetic: true,
 				});
@@ -139,7 +180,7 @@ export default function GameplayHistoryModal({
 		} else {
 			setSelectedSession(null);
 		}
-	}, [historyToLoad, sessionHistory, isReforger]);
+	}, [historyToLoad, sessionHistory, isReforger, mission?.name]);
 
 	// Auto-fill session end time when outcome is first set (new or existing entry)
 	useEffect(() => {
@@ -147,14 +188,20 @@ export default function GameplayHistoryModal({
 		if (outcome?.value) setSessionEndedAt(toDatetimeLocal(new Date()));
 	}, [outcome]);
 
-	function addHistory() {
+	async function addHistory(postToDiscord: boolean = true) {
 		setIsLoading(true);
 		try {
+			let activeSessionToUse = selectedSession;
+			
+			if (isReforger && postToDiscord && !activeSessionToUse) {
+				activeSessionToUse = await createDiscordMessage();
+			}
+
 			const data = {
 				aarReplayLink,
 				date: dateObj,
 				gmNote: gmNote,
-				_id: historyToLoad ? historyToLoad._id : new ObjectID(),
+				_id: (historyToLoad && historyToLoad._id) ? historyToLoad._id : new ObjectId(),
 				leaders: listOfLeaders.map((leader) => {
 					return {
 						aar: leader.aar,
@@ -167,10 +214,11 @@ export default function GameplayHistoryModal({
 				}),
 
 				outcome: outcome?.value || null,
-				...(isReforger && selectedSession && {
-					discordMessageId: selectedSession.messageId,
-					discordThreadId: selectedSession.threadId,
-					discordMessageUrl: selectedSession.discordMessageUrl ?? null,
+				...(isReforger && { serverSessionId: serverSessionId || null }),
+				...(isReforger && postToDiscord && activeSessionToUse && {
+					discordMessageId: activeSessionToUse.messageId,
+					discordThreadId: activeSessionToUse.threadId,
+					discordMessageUrl: activeSessionToUse.discordMessageUrl ?? null,
 				}),
 				...(isReforger && {
 					sessionStartedAt: sessionStartedAt ? new Date(sessionStartedAt) : null,
@@ -182,33 +230,24 @@ export default function GameplayHistoryModal({
                 ? `/api/reforger-missions/${mission.uniqueName}/history`
                 : `/api/missions/${mission.uniqueName}/history`;
 
-			axios
-				.request({
-					method: historyToLoad ? "PUT" : "POST",
-					url: endpoint,
-					data: data,
-				})
+			const response = await axios.request({
+				method: (historyToLoad && historyToLoad._id) ? "PUT" : "POST",
+				url: endpoint,
+				data: data,
+			});
 
-				.then((response) => {
-					clear();
-					onClose(data, !!historyToLoad);
-				})
-				.catch((error) => {
-					console.error(error);
-					if (error?.response?.status == 500) {
-						toast.error("Error submiting history");
-					} else {
-						if (error?.response?.data && error?.response?.data?.error) {
-							toast.error(error.response.data.error);
-						}
-					}
-				})
-				.finally(() => {
-					setIsLoading(false);
-				});
+			clear();
+			onClose(data, !!(historyToLoad && historyToLoad._id));
 		} catch (error) {
 			console.error(error);
-			toast.error("Error submiting history");
+			if (error?.response?.status == 500) {
+				toast.error("Error submiting history");
+			} else {
+				if (error?.response?.data && error?.response?.data?.error) {
+					toast.error(error.response.data.error);
+				}
+			}
+		} finally {
 			setIsLoading(false);
 		}
 	}
@@ -254,8 +293,8 @@ export default function GameplayHistoryModal({
 
 	useEffect(() => {
 		if (historyToLoad) {
-			setGmNote(historyToLoad.gmNote);
-			const leadersClone = historyToLoad.leaders.map((item) => {
+			setGmNote(historyToLoad.gmNote ?? "");
+			const leadersClone = (historyToLoad.leaders ?? []).map((item) => {
 				return {
 					aar: item.aar,
 					userId: item.discordID,
@@ -267,31 +306,40 @@ export default function GameplayHistoryModal({
 			});
 
 			setListOfLeaders(leadersClone);
-			setOutcome({ value: historyToLoad.outcome, label: historyToLoad.outcome });
+			setOutcome(historyToLoad.outcome ? { value: historyToLoad.outcome, label: historyToLoad.outcome } : null);
 			const date = moment(historyToLoad.date);
 			setDateObj(date.toDate());
 			setDateString(date.format("DD/MM/YYYY"));
 			setAARReplayLink(historyToLoad.aarReplayLink);
+			setShowAdvanced(!!historyToLoad.aarReplayLink);
 			setSessionStartedAt(historyToLoad.sessionStartedAt ? toDatetimeLocal(new Date(historyToLoad.sessionStartedAt)) : "");
 			setSessionEndedAt(historyToLoad.sessionEndedAt ? toDatetimeLocal(new Date(historyToLoad.sessionEndedAt)) : "");
+			setServerSessionId(historyToLoad.serverSessionId ? String(historyToLoad.serverSessionId) : null);
 		} else {
 			clear();
 		}
 	}, [historyToLoad]);
+
 	function clear() {
 		setGmNote("");
-		setListOfLeaders([]);
+		setListOfLeaders([
+			{ userId: null, name: "", role: { value: "leader", label: "Leader" }, side: null, aar: null, displayAvatarURL: null }
+		]);
 		setOutcome(null);
 		setDateObj(new Date());
 		setDateString(moment().format("DD/MM/YYYY"));
 		setDateError("");
 		setAARReplayLink("");
+		setShowAdvanced(false);
 		setSessionStartedAt("");
 		setSessionEndedAt("");
 		setSelectedSession(null);
+		setServerSessionId(null);
+		setNearSessions([]);
 	}
 
 	const [_document, set_document] = React.useState(null);
+	const initialFocusRef = React.useRef(null);
 
 	React.useEffect(() => {
 		set_document(document.body);
@@ -303,8 +351,9 @@ export default function GameplayHistoryModal({
 				as="div"
 				className="fixed inset-0 z-20 overflow-y-auto"
 				onClose={onClose}
+				initialFocus={initialFocusRef}
 			>
-				<div className="min-h-screen px-4 text-center">
+				<div ref={initialFocusRef} className="min-h-screen px-4 text-center focus:outline-none" tabIndex={-1}>
 					<Transition.Child
 						as={Fragment}
 						enter="ease-out duration-300"
@@ -331,10 +380,19 @@ export default function GameplayHistoryModal({
 						leaveTo="opacity-0 scale-110"
 					>
 						<div className="max-w-3xl modal-standard">
+							
 							<Dialog.Title as="h3" className="text-lg font-medium leading-6 ">
 								New Gameplay History
 							</Dialog.Title>
+							<div className="flex gap-1 mt-1 mb-3">
+								<span className="badge badge-sm badge-neutral">Admin</span>
+								<span className="badge badge-sm badge-neutral">Arma GM</span>
+								<span className="badge badge-sm badge-neutral">Mission Review Team</span>
+							</div>
 							<div className="mt-2 space-y-5 ">
+						{/* Outcome + Date on same row */}
+						<div className="flex gap-2 items-start">
+							<div className="flex-1">
 								<CreatableSelect
 									classNamePrefix="select-input"
 									menuPortalTarget={_document}
@@ -346,7 +404,11 @@ export default function GameplayHistoryModal({
 									isSearchable={true}
 									isClearable
 									value={outcome}
+									autoFocus={false}
 								/>
+							</div>
+							{!isReforger && (
+							<div className="w-36 shrink-0">
 								{/* @ts-ignore */}
 								<NumberFormat
 									format="##/##/####"
@@ -373,74 +435,28 @@ export default function GameplayHistoryModal({
 									}}
 								/>
 								{dateError && (
-									<span className="text-red-500 label-text-alt">{dateError}</span>
+									<span className="text-red-500 label-text-alt text-xs">{dateError}</span>
 								)}
-
-								<input
-									type="text"
-									placeholder="AAR Link"
-									value={aarReplayLink}
-									onChange={(e) => {
-										setAARReplayLink(e.target.value.trim());
-									}}
-									className="w-full rounded-lg input input-bordered"
-								/>
-
-								<ReactMde
-									value={gmNote}
-									toolbarCommands={[
-										[
-											"header",
-											"bold",
-											"italic",
-											"strikethrough",
-											"link",
-											"quote",
-											"code",
-											"unordered-list",
-											"ordered-list",
-										],
-									]}
-									onChange={setGmNote}
-									selectedTab={selectedNoteTab}
-									onTabChange={setSelectedNoteTab}
-									classes={{
-										textArea: "",
-										reactMde: ",de",
-									}}
-									childProps={{
-										writeButton: {
-											tabIndex: -1,
-											style: { padding: "0 10px" },
-										},
-										previewButton: {
-											style: { padding: "0 10px" },
-										},
-									}}
-									generateMarkdownPreview={async (markdown) => {
-										return Promise.resolve(
-											<div
-												className="prose"
-												dangerouslySetInnerHTML={{
-													__html: generateMarkdown(markdown),
-												}}
-											></div>
-										);
-									}}
-								/>
-
+							</div>
+							)}
+						</div>
 								<Select
-									options={[notOnDiscordUser, ...discordUsers]}
+									options={[notOnDiscordUser, ...sortedDiscordUsers]}
 									classNamePrefix="select-input"
 									placeholder="Select a leader..."
 									blurInputOnSelect={true}
 									menuPortalTarget={_document}
 									styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
 									onChange={(val) => {
-										if (listOfLeaders.includes(val)) {
+										if (listOfLeaders.some(l => l.userId === val.userId)) {
 											return;
 										}
-										addLeader(val);
+										// If the first leader slot is empty, replace it
+										if (listOfLeaders.length === 1 && !listOfLeaders[0].userId) {
+											setListOfLeaders([{ ...val, role: { value: "leader", label: "Leader" } }]);
+										} else {
+											addLeader(val);
+										}
 										setSelectedDiscordUser(null);
 									}}
 									isSearchable={true}
@@ -448,26 +464,41 @@ export default function GameplayHistoryModal({
                                     isLoading={!discordUsers}
                                     loadingMessage={() => "Loading users..."}
 									getOptionLabel={(option) => {
-										return option.nickname ?? option.displayName;
+										return (option.nickname ?? option.displayName) + (option.leadershipCount > 0 ? ` (${option.leadershipCount})` : "");
 									}}
 								/>
 								<div className="space-y-1 slashed-zero">
-									{listOfLeaders.map((entry) => (
+									{listOfLeaders.map((entry, index) => (
 										<div
-											key={entry.userId}
+											key={entry.userId || index}
 											className="flex flex-row items-center space-x-1"
 										>
-											<div>{entry.name ?? entry.nickname ?? entry.displayName}</div>
+											<div className="min-w-[120px] text-sm">
+												{entry.userId ? (entry.name ?? entry.nickname ?? entry.displayName) : <span className="text-gray-400 italic">Empty slot</span>}
+											</div>
 											<div className="flex-1"></div>
-											<div className="w-32">
+											<div className="w-32 shrink-0">
 												<Select
 													classNamePrefix="select-input"
-													options={[
-														{ value: "BLUFOR", label: "BLUFOR" },
-														{ value: "OPFOR", label: "OPFOR" },
-														{ value: "INDFOR", label: "INDFOR" },
-														{ value: "CIV", label: "CIV" },
-													]}
+													options={(() => {
+														const fallbackFactions = [
+															{ value: "BLUFOR", label: "BLUFOR" },
+															{ value: "OPFOR", label: "OPFOR" },
+															{ value: "INDFOR", label: "INDFOR" },
+															{ value: "CIV", label: "CIV" },
+														];
+														const dynamicFactions = (mission?.factions ?? []).map((f: any) => ({
+															value: f.name,
+															label: f.name
+														}));
+														const allFactions = [...dynamicFactions];
+														for (const fb of fallbackFactions) {
+															if (!allFactions.find(f => f.value === fb.value)) {
+																allFactions.push(fb);
+															}
+														}
+														return allFactions;
+													})()}
 													menuPortalTarget={_document}
 													styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
 													getOptionValue={(option) => option.value}
@@ -514,132 +545,187 @@ export default function GameplayHistoryModal({
 									))}
 								</div>
 
-								{/* Session timestamps (Reforger only) */}
-								{isReforger && (
-									<div className="grid grid-cols-2 gap-2">
+								{/* ── Advanced (GM notes · AAR link · Session chart · Discord link) ── */}
+							<div>
+								<button
+									type="button"
+									className="text-xs text-gray-400 hover:text-gray-200 mt-1"
+									onClick={() => setShowAdvanced(!showAdvanced)}
+								>
+									{showAdvanced ? "▲ Hide advanced" : "▼ Advanced (GM notes · AAR link · Session chart · Discord link)"}
+								</button>
+								{showAdvanced && (
+									<div className="space-y-3 mt-3 text-left">
+									<ReactMde
+									value={gmNote}
+									toolbarCommands={[
+									[
+										"header",
+										"bold",
+										"italic",
+										"strikethrough",
+										"link",
+										"quote",
+										"code",
+										"unordered-list",
+										"ordered-list",
+									],
+									]}
+									onChange={setGmNote}
+									selectedTab={selectedNoteTab}
+									onTabChange={setSelectedNoteTab}
+									minEditorHeight={60}
+									maxEditorHeight={160}
+									classes={{
+									textArea: "",
+									reactMde: ",de",
+									}}
+									childProps={{
+									writeButton: {
+										tabIndex: -1,
+										style: { padding: "0 10px" },
+									},
+									previewButton: {
+										style: { padding: "0 10px" },
+									},
+									}}
+									generateMarkdownPreview={async (markdown) => {
+									return Promise.resolve(
+										<div
+											className="prose"
+											dangerouslySetInnerHTML={{
+												__html: generateMarkdown(markdown),
+											}}
+										></div>
+									);
+									}}
+									/>
+									<input
+										type="text"
+										placeholder="AAR Link"
+										value={aarReplayLink}
+										onChange={(e) => {
+											setAARReplayLink(e.target.value.trim());
+										}}
+										className="w-full rounded-lg input input-bordered"
+									/>
+									{isReforger && (
 										<div>
-											<label className="label pb-0"><span className="label-text text-xs">Mission started</span></label>
-											<input
-												type="datetime-local"
-												className="w-full rounded-lg input input-bordered input-sm"
-												value={sessionStartedAt}
-												onChange={(e) => setSessionStartedAt(e.target.value)}
+											<label className="label pb-1">
+												<span className="label-text text-xs">Session Discord message link</span>
+												{selectedSession?.discordMessageUrl && (
+													<a
+														href={selectedSession.discordMessageUrl}
+														target="_blank"
+														rel="noreferrer"
+														className="label-text-alt text-primary text-xs"
+													>
+														View in Discord
+													</a>
+												)}
+											</label>
+											<Select
+												classNamePrefix="select-input"
+												menuPortalTarget={_document}
+												styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
+												isClearable
+												placeholder="None (Will create new if posted to Discord)"
+												options={[...sessionHistory].reverse()}
+												value={selectedSession}
+												onChange={(val: any) => setSelectedSession(val ?? null)}
+												getOptionValue={(o: any) => o.messageId}
+												getOptionLabel={(o: any) => {
+													const time = o.loadedAt ? moment(o.loadedAt).format("HH:mm") : "";
+													const tag = o._synthetic ? " (linked)" : "";
+													return `${o.missionName}${time ? ` - ${time}` : ""}${tag}`;
+												}}
 											/>
 										</div>
+									)}
+									{isReforger && (
 										<div>
-											<label className="label pb-0"><span className="label-text text-xs">Mission ended</span></label>
-											<input
-												type="datetime-local"
-												className="w-full rounded-lg input input-bordered input-sm"
-												value={sessionEndedAt}
-												onChange={(e) => setSessionEndedAt(e.target.value)}
+											<label className="label pb-1">
+												<span className="label-text text-xs">Server session chart link</span>
+												{serverSessionId && (
+													<span className="label-text-alt text-xs text-gray-400 font-mono">{serverSessionId.slice(-8)}</span>
+												)}
+											</label>
+											<Select
+												classNamePrefix="select-input"
+												menuPlacement="auto"
+												menuPortalTarget={_document}
+												styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
+												isClearable
+												isLoading={nearSessionsLoading}
+												placeholder="None (no chart linked)"
+												options={nearSessions}
+												value={nearSessions.find((s) => s._id === serverSessionId) ?? (serverSessionId ? { _id: serverSessionId, missionString: "Linked session (outside date range)" } : null)}
+												onChange={(val) => setServerSessionId(val ? val._id : null)}
+												getOptionValue={(o) => o._id}
+												getOptionLabel={(o) => {
+													const date = o.startedAt ? moment(o.startedAt).format("MMM D HH:mm") : "";
+													const players = o.peakPlayerCount ? " · " + o.peakPlayerCount + "p" : "";
+													const mission = o.missionString || o.missionUniqueName || "Unknown";
+													return date ? date + " — " + mission + players : mission;
+												}}
 											/>
 										</div>
-									</div>
-								)}
-
-								{/* Session Discord message selector (Reforger only) */}
-								{isReforger && (
-									<div>
-										<label className="label pb-1">
-											<span className="label-text text-xs">Session Discord message</span>
-											{selectedSession?.discordMessageUrl && (
-												<a
-													href={selectedSession.discordMessageUrl}
-													target="_blank"
-													rel="noreferrer"
-													className="label-text-alt text-primary text-xs"
-												>
-													View in Discord
-												</a>
-											)}
-										</label>
-										<Select
-											classNamePrefix="select-input"
-											menuPortalTarget={_document}
-											styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
-											isClearable
-											placeholder="None — don't update Discord"
-											options={[
-												{ _createNew: true, messageId: "__create_new__", missionName: "" },
-												...[...sessionHistory].reverse(),
-											]}
-											value={selectedSession}
-											onChange={(val: any) => {
-												if (val?._createNew) { createDiscordMessage(); return; }
-												setSelectedSession(val ?? null);
-											}}
-											isOptionDisabled={(o: any) => o._createNew && isCreatingDiscordMessage}
-											getOptionValue={(o: any) => o.messageId}
-											getOptionLabel={(o: any) => {
-												if (o._createNew) return isCreatingDiscordMessage ? "Creating…" : "+ Create Discord message";
-												const time = o.loadedAt ? moment(o.loadedAt).format("HH:mm") : "";
-												const tag = o._synthetic ? " (linked)" : "";
-												return `${o.missionName}${time ? ` - ${time}` : ""}${tag}`;
-											}}
-											formatOptionLabel={(o: any, { context }: any) => {
-												if (o._createNew) {
-													return (
-														<div>
-															<span className={isCreatingDiscordMessage ? "opacity-50" : "text-primary font-medium"}>
-																{isCreatingDiscordMessage ? "Creating…" : "+ Create Discord message"}
-															</span>
-															{context === "menu" && (
-																<div className="text-xs text-gray-400 mt-0.5 whitespace-normal">
-																	Use if the mission was started without Load Mission and no Discord post was created yet.
-																</div>
-															)}
-														</div>
-													);
-												}
-												const time = o.loadedAt ? moment(o.loadedAt).format("HH:mm") : "";
-												const tag = o._synthetic ? " (linked)" : "";
-												return `${o.missionName}${time ? ` - ${time}` : ""}${tag}`;
-											}}
-										/>
+									)}
 									</div>
 								)}
 							</div>
+							</div>
 
 							<div className="flex flex-row justify-between mt-4">
-								<button
-									type="button"
-									className="btn btn-sm"
-									onClick={() => {
-										onClose();
-									}}
-								>
-									Close
-								</button>
 								<div className="flex flex-row space-x-2">
+									<button
+										type="button"
+										className="btn btn-sm"
+										onClick={() => { onClose(); }}
+									>
+										Close
+									</button>
 									{historyToLoad && (
 										<button
 											type="button"
-											className={
-												isLoading
-													? "btn btn-sm btn-error loading"
-													: "btn btn-sm btn-error"
-											}
-											onClick={() => {
-												deleteHistory();
-											}}
+											className={isLoading ? "btn btn-sm btn-error loading" : "btn btn-sm btn-error"}
+											disabled={isLoading}
+											onClick={() => { deleteHistory(); }}
 										>
 											DELETE
 										</button>
 									)}
-									<button
-										type="button"
-										className={
-											isLoading
-												? "primary-btn-sm  loading"
-												: "primary-btn-sm "
-										}
-										onClick={() => {
-											addHistory();
-										}}
-									>
-										{historyToLoad ? "EDIT" : "SUMIT HISTORY"}
-									</button>
+								</div>
+								<div className="flex flex-row space-x-2">
+									{isReforger ? (
+										<>
+											<button
+												type="button"
+												className={isLoading ? "btn btn-sm btn-error loading" : "btn btn-sm btn-error"}
+												disabled={isLoading}
+												onClick={() => { addHistory(false); }}
+											>
+												Submit History
+											</button>
+											<button
+												type="button"
+												className={isLoading ? "btn btn-sm btn-success loading" : "btn btn-sm btn-success"}
+												disabled={isLoading}
+												onClick={() => { addHistory(true); }}
+											>
+												Submit History &amp; Post to Discord
+											</button>
+										</>
+									) : (
+										<button
+											type="button"
+											className={isLoading ? "primary-btn-sm loading" : "primary-btn-sm"}
+											disabled={isLoading}
+											onClick={() => { addHistory(); }}
+										>
+											{historyToLoad ? "EDIT" : "SUBMIT HISTORY"}
+										</button>
+									)}
 								</div>
 							</div>
 						</div>

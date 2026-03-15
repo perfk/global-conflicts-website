@@ -32,8 +32,8 @@ import { REVIEW_STATE_ACCEPTED, REVIEW_STATE_PENDING } from '../../lib/reviewSta
 import axios from "axios";
 import { toast } from "react-toastify";
 import { useRouter } from "next/router";
+import Link from "next/link";
 import AdminControlsModal from "../../components/modals/admin_controls_modal";
-import GmControlsModal from "../../components/modals/gm_controls_modal";
 import { calculateMissionScore, DEFAULT_SMART_CONFIG, SmartScoreConfig } from "../../lib/missionSmartScoring";
 
 import dynamic from "next/dynamic";
@@ -171,7 +171,6 @@ function ReforgerMissionList({ missions }) {
 	const [isSyncing, setIsSyncing] = useState(false);
     const [showAllData, setShowAllData] = useState(false);
     const [adminModalOpen, setAdminModalOpen] = useState(false);
-    const [gmModalOpen, setGmModalOpen] = useState(false);
 	const router = useRouter();
 
 	const [denseMode, setDenseMode] = useState(false)
@@ -188,6 +187,7 @@ function ReforgerMissionList({ missions }) {
     const [maxSlotsMin, setMaxSlotsMin] = useState(null);
     const [maxSlotsMax, setMaxSlotsMax] = useState(null);
 	const [tagFilterValue, setTagFilterValue] = useState([]);
+	const [avoidTagFilterValue, setAvoidTagFilterValue] = useState([]);
 	const [eraFilterValue, setEraFilterValue] = useState([]);
 	const [respawnFilterValue, setRespawnFilterValue] = useState(null);
     const [statusFilterValue, setStatusFilterValue] = useState(null); // New state for status filter
@@ -241,7 +241,7 @@ function ReforgerMissionList({ missions }) {
             localStorage.setItem("isSmartSortEnabled_Reforger", String(isSmartSortEnabled));
             localStorage.setItem("smartConfig_Reforger", JSON.stringify(smartConfig));
         } else {
-             setIsSmartSortEnabled(localStorage.getItem("isSmartSortEnabled_Reforger") === "true");
+             setIsSmartSortEnabled(localStorage.getItem("isSmartSortEnabled_Reforger") !== "false");
             const localSmartConfig = localStorage.getItem("smartConfig_Reforger");
             if (localSmartConfig) {
                 try {
@@ -300,7 +300,7 @@ function ReforgerMissionList({ missions }) {
             {
                 name: "Name",
                 selector: (row) => row.name,
-                cell: (row) => <div data-tag="allowRowEvents" className="truncate" title={row.name}>{row.name.substring(0, 20)}</div>,
+                cell: (row) => <div data-tag="allowRowEvents" className="truncate" title={row.name}>{row.name.length > 30 ? row.name.substring(0, 30) + ".." : row.name}</div>,
                 sortable: true,
                 width: "200px",
                 center: true,
@@ -389,7 +389,7 @@ function ReforgerMissionList({ missions }) {
                 selector: (row) => row.name,
                 width: "200px",
                 sortable: true,
-                cell: (row) => <div data-tag="allowRowEvents" className="truncate" title={row.name}>{row.name.substring(0, 30)}</div>,
+                cell: (row) => <div data-tag="allowRowEvents" className="truncate" title={row.name}>{row.name.length > 40 ? row.name.substring(0, 40) + ".." : row.name}</div>,
                 center: true,
             },
             {
@@ -1079,6 +1079,14 @@ function ReforgerMissionList({ missions }) {
 		return tagFilterValue.every((r) => tags.includes(r.value));
 	}
 
+	const avoidTagFilter = (x) => {
+		if (avoidTagFilterValue.length === 0) return true;
+		const tags = x["tags"];
+		if (!tags || !Array.isArray(tags) || tags.length === 0) return true;
+		// Exclude missions that have ANY of the avoid tags
+		return !avoidTagFilterValue.some((r) => tags.includes(r.value));
+	}
+
 	const eraFilter = (x) => {
 		let hasMatch = true;
 		if (eraFilterValue.length > 0) {
@@ -1108,6 +1116,7 @@ function ReforgerMissionList({ missions }) {
         setMaxSlotsMin(null)
         setMaxSlotsMax(null)
 		setTagFilterValue([])
+		setAvoidTagFilterValue([])
 		setEraFilterValue([])
 		setRespawnFilterValue(null)
 		setDenseMode(false)
@@ -1116,6 +1125,7 @@ function ReforgerMissionList({ missions }) {
         setShowEventMissions(false);
         setStatusFilterValue(null); // Reset status filter
 
+        localStorage.removeItem("reforger_avoidTagFilter");
         localStorage.removeItem("reforger_minSlotsMin");
         localStorage.removeItem("reforger_minSlotsMax");
         localStorage.removeItem("reforger_maxSlotsMin");
@@ -1153,6 +1163,11 @@ function ReforgerMissionList({ missions }) {
 				setTagFilterValue(JSON.parse(localTagFilter))
 			}
 
+			const localAvoidTagFilter = localStorage.getItem("reforger_avoidTagFilter")
+			if (localAvoidTagFilter != null) {
+				setAvoidTagFilterValue(JSON.parse(localAvoidTagFilter))
+			}
+
 			const localEraFilter = localStorage.getItem("reforger_eraFilter")
 			if (localEraFilter != null) {
 				setEraFilterValue(JSON.parse(localEraFilter))
@@ -1186,6 +1201,7 @@ function ReforgerMissionList({ missions }) {
 				})
                 .filter(eventMissionsFilter)
 				.filter(tagFilter)
+				.filter(avoidTagFilter)
 				.filter(eraFilter)
 				.filter(respawnFilter)
 				.filter(mapFilter)
@@ -1203,6 +1219,7 @@ function ReforgerMissionList({ missions }) {
 	}, [
 		anythingFilterValue,
 		tagFilterValue,
+		avoidTagFilterValue,
 		eraFilterValue,
 		respawnFilterValue,
 		authorFilterValue,
@@ -1359,6 +1376,7 @@ function ReforgerMissionList({ missions }) {
 							localStorage.removeItem("reforger_typeFilter")
 							localStorage.removeItem("reforger_mapFilter")
 							localStorage.removeItem("reforger_tagFilter")
+							localStorage.removeItem("reforger_avoidTagFilter")
 							localStorage.removeItem("reforger_eraFilter")
 							localStorage.removeItem("reforger_respawnFilter")
 							localStorage.removeItem("reforger_denseMode")
@@ -1405,6 +1423,25 @@ function ReforgerMissionList({ missions }) {
 									onChange={(e) => {
 										localStorage.setItem("reforger_tagFilter", JSON.stringify(e))
 										setTagFilterValue(e)
+									}}
+									options={tagsOptions}
+									components={makeAnimated()}
+								/>
+							</div>
+							<div className="form-control">
+								<label className="label">
+									<span className="label-text">Avoid Tags</span>
+									<span className="label-text-alt opacity-60">Hides missions that have any of these tags</span>
+								</label>
+								<Select
+									isMulti
+									classNamePrefix="select-input"
+									name="AvoidTags"
+									styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
+									value={avoidTagFilterValue}
+									onChange={(e) => {
+										localStorage.setItem("reforger_avoidTagFilter", JSON.stringify(e))
+										setAvoidTagFilterValue(e as any)
 									}}
 									options={tagsOptions}
 									components={makeAnimated()}
@@ -1597,14 +1634,13 @@ function ReforgerMissionList({ missions }) {
 										<ChartBarIcon className="w-4 h-4 mr-2" />
 										Stats
 									</button>
-									{hasCredsAny(session, [CREDENTIAL.GM, CREDENTIAL.ADMIN]) && (
-										<button
-											onClick={() => setGmModalOpen(true)}
-											className="btn btn-sm btn-secondary"
-										>
+									{/* TEMPORARY: Mission Review Team has the same access as Arma GM until GMs
+									    are more familiar with the system. Remove CREDENTIAL.MISSION_REVIEWER when no longer needed. */}
+									{hasCredsAny(session, [CREDENTIAL.GM, CREDENTIAL.ADMIN, CREDENTIAL.MISSION_REVIEWER]) && (
+										<Link href="/staff/server-sessions" className="btn btn-sm btn-secondary">
 											<UserGroupIcon className="w-4 h-4 mr-2" />
 											GM Controls
-										</button>
+										</Link>
 									)}
 									{hasCredsAny(session, [CREDENTIAL.MISSION_REVIEWER, CREDENTIAL.ADMIN]) && (
 										<button
@@ -1654,11 +1690,6 @@ function ReforgerMissionList({ missions }) {
 									runSync(false, date);
 									setAdminModalOpen(false);
 								}}
-							/>
-
-							<GmControlsModal
-								isOpen={gmModalOpen}
-								onClose={() => setGmModalOpen(false)}
 							/>
 
 							{/* Smart Sort Config Panel (moved here) */}
@@ -2012,9 +2043,29 @@ export async function getServerSideProps() {
 				tags: { $ifNull: ["$_meta.tags", []] },
 				isUnlisted: { $ifNull: ["$_meta.isUnlisted", false] },
 				votes: { $ifNull: ["$_meta.votes", []] },
-				lastPlayed: "$_meta.lastPlayed",
+				lastPlayed: {
+					$ifNull: [
+						{ $max: { $map: { 
+							input: { $filter: {
+								input: { $ifNull: ["$_meta.history", []] },
+								as: "h",
+								cond: { $ne: ["$$h.isSkeleton", true] }
+							} }, 
+							as: "h", 
+							in: "$$h.date" 
+						} } },
+						"$_meta.lastPlayed"
+					]
+				},
 				missionGroup: { $ifNull: ["$_meta.missionGroup", null] },
-				playCount: { $add: [{ $ifNull: ["$_meta.manualPlayCount", 0] }, { $size: { $ifNull: ["$_meta.history", []] } }] },
+				playCount: { $add: [
+					{ $ifNull: ["$_meta.manualPlayCount", 0] }, 
+					{ $size: { $filter: {
+						input: { $ifNull: ["$_meta.history", []] },
+						as: "h",
+						cond: { $ne: ["$$h.isSkeleton", true] }
+					} } }
+				] },
                 rating: {
                     $avg: {
                         $map: {

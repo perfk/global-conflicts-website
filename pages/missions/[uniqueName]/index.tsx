@@ -1491,6 +1491,7 @@ export default function MissionDetails({
 				mission={mission}
 				isOpen={gameplayHistoryModalOpen}
 				historyToLoad={gameplayHistoryModalHistoryToLoad}
+				historyCount={getHistory()?.length ?? 0}
 				onClose={(data, isUpdate) => {
 					setTimeout(() => {
 						setGameplayHistoryModalHistoryToLoad(null);

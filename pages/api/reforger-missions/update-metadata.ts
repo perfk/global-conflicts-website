@@ -6,6 +6,7 @@ import { CREDENTIAL } from "../../../middleware/check_auth_perms";
 import { hasCredsAny } from "../../../lib/credsChecker";
 import MyMongo from "../../../lib/mongodb";
 import { logReforgerAction, LOG_ACTION } from "../../../lib/logging";
+import { postMissionFeedback } from "../../../lib/discordPoster";
 
 const apiRoute = nextConnect({
     onError(error, req: NextApiRequest, res: NextApiResponse) {
@@ -38,7 +39,7 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
             lastUpdated: new Date(),
             ...(item.era && { era: item.era }),
             ...(item.status && { status: item.status }),
-            ...(item.statusNotes && { statusNotes: item.statusNotes }),
+            ...(item.statusNotes != null && { statusNotes: item.statusNotes }),
         };
 
         // Handle missionGroup: explicit null clears it, string sets it
@@ -68,6 +69,30 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
             { upsert: true }
         );
 
+        if (item.postToFeedback) {
+            const mission = await db.collection("reforger_missions").findOne({ missionId: item.missionId });
+            if (mission) {
+                const configs = await db.collection("configs").findOne({}, { projection: { author_mappings: 1 } });
+                let authorId = mission.authorID;
+                if (!authorId && mission.missionMaker) {
+                    const mapping = (configs?.author_mappings ?? []).find(
+                        (m: { name: string; discordId: string }) => m.name === mission.missionMaker
+                    );
+                    if (mapping?.discordId) {
+                        authorId = mapping.discordId;
+                    }
+                }
+                const mappedAuthorString = authorId ? `<@${authorId}>` : mission.missionMaker;
+
+                await postMissionFeedback({
+                    missionName: mission.name,
+                    status: item.status,
+                    notes: item.statusNotes,
+                    author: session?.user?.["nickname"] || session?.user?.["username"] || "Unknown GM",
+                    missionMaker: mappedAuthorString
+                });
+            }
+        }
 
         await logReforgerAction(
             LOG_ACTION.METADATA_UPDATE,

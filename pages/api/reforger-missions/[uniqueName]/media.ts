@@ -4,6 +4,7 @@ import MyMongo from "../../../../lib/mongodb";
 import { CREDENTIAL } from "../../../../middleware/check_auth_perms";
 import axios from "axios";
 import { hasCredsAny } from "../../../../lib/credsChecker";
+import { findReforgerMissionBySlug } from "../../../../lib/missionsHelpers";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "../../auth/[...nextauth]";
 
@@ -19,10 +20,7 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
 	}
 
 	const db = (await MyMongo).db("prod");
-	const mission = await db.collection("reforger_missions").findOne(
-		{ uniqueName: uniqueName },
-		{ projection: { missionId: 1, uniqueName: 1 } }
-	);
+	const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1 });
 	if (!mission) {
 		return res.status(200).json([]);
 	}

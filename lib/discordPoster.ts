@@ -60,11 +60,14 @@ export async function postNewYoutubeVideoToVerify(body) {
 /**
  * Tell the bot to update config.json with the new scenarioId and restart
  * the main Reforger server.
+ * missionString is the human-readable label e.g. "COOP (16-30) Devils Drive".
+ * The bot writes it to mission_context.json so start.ps1 can pass it to the
+ * mock server's load signal during local development.
  */
-export async function callBotSetScenario(scenarioId: string): Promise<void> {
+export async function callBotSetScenario(scenarioId: string, missionString: string): Promise<void> {
 	await axios.post(
 		`${BOT_URL}/server/set-scenario`,
-		{ scenarioId },
+		{ scenarioId, missionString },
 		{ timeout: 15000 }
 	);
 }
@@ -77,7 +80,7 @@ export async function callBotPostMessage(body: {
 	channelId: string;
 	threadName: string;
 	threadId: string | null;
-	embed: { description: string; color: string; footer: string };
+	embed: { description: string; color: string; footer?: string };
 }): Promise<{ messageId: string; threadId: string }> {
 	const response = await axios.post(`${BOT_URL}/server/post-discord-message`, body, {
 		timeout: 15000,
@@ -100,23 +103,52 @@ export async function callBotDeleteMessage(body: {
  */
 export async function callBotPostToThread(body: {
 	threadId: string;
-	embed: { description: string; color: string; footer: string };
+	embed: { description: string; color: string; footer?: string };
 }): Promise<{ messageId: string }> {
 	const response = await axios.post(`${BOT_URL}/server/post-to-thread`, body, { timeout: 15000 });
 	return response.data;
 }
 
 /**
+ * Tell the bot to delete an entire forum thread.
+ * The bot checks whether the thread contains more than 2 non-bot messages.
+ * Returns { deleted: true } on success or { deleted: false, reason, messageCount } if refused.
+ */
+export async function callBotDeleteThread(body: {
+	threadId: string;
+}): Promise<{ deleted: boolean; reason?: string; messageCount?: number }> {
+	const response = await axios.post(`${BOT_URL}/server/delete-thread`, body, { timeout: 15000 });
+	return response.data;
+}
+
+/**
  * Tell the bot to edit an existing Discord message.
- * Pass addReactions: true (with uniqueName + historyEntryId) to add 👍🆗👎 and register the message as ratable.
+ * When addReactions is true (outcome is being set), the bot will delete the original
+ * message and post a new one so Discord notifies channel members — returns new messageId.
+ * When addReactions is false, just edits in-place (no notification needed).
  */
 export async function callBotEditMessage(body: {
 	messageId: string;
 	threadId: string;
-	embed: { description: string; color: string; footer: string };
+	embed: { description: string; color: string; footer?: string };
 	addReactions?: boolean;
 	uniqueName?: string;
 	historyEntryId?: string;
-}): Promise<void> {
-	await axios.post(`${BOT_URL}/server/edit-discord-message`, body, { timeout: 15000 });
+}): Promise<{ newMessageId?: string }> {
+	const response = await axios.post(`${BOT_URL}/server/edit-discord-message`, body, { timeout: 15000 });
+	return response.data;
+}
+
+/**
+ * Tell the bot to post a feedback message to the designated feedback channel.
+ */
+export async function postMissionFeedback(body: {
+	missionName: string;
+	status: string;
+	notes: string;
+	author: string;
+	missionMaker?: string;
+}) {
+	const channelId = process.env.NODE_ENV === "production" ? "745428624408051872" : "1480878310002135174";
+	await axios.post(`${BOT_URL}/server/post-feedback`, { ...body, channelId }, { timeout: 15000 });
 }

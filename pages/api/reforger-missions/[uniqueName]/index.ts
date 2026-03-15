@@ -61,7 +61,7 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
 	const { uniqueName } = req.query;
 	const session = await getServerSession(req, res, authOptions);
  
-	if (!hasCredsAny(session, [CREDENTIAL.MISSION_MAKER, CREDENTIAL.ADMIN, CREDENTIAL.MISSION_REVIEWER])) {
+	if (!hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM, CREDENTIAL.MISSION_REVIEWER])) {
 		return res.status(401).json({ error: `Not Authorized` });
 	}
 
@@ -105,7 +105,7 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
 	}
 
 	await (await MyMongo).db("prod").collection("reforger_missions").updateOne(
-		{ uniqueName: uniqueName },
+		{ $or: [{ uniqueName: uniqueName }, { missionId: uniqueName }] },
 		{
 			$set: updateBody,
 		}

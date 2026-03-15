@@ -9,10 +9,11 @@ import { hasCredsAny } from "../../../../../lib/credsChecker";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../auth/[...nextauth]";
 import { logReforgerAction, LOG_ACTION } from "../../../../../lib/logging";
+import { findReforgerMissionBySlug } from "../../../../../lib/missionsHelpers";
 
 /** Build a Discord embed for the live-session message based on the history entry. */
 function buildSessionEmbed(
-    mission: { name: string; type?: string; size?: { min: number; max: number }; uniqueName?: string; authorName?: string; shortDesc?: string },
+    mission: { name: string; type?: string; size?: { min: number; max: number }; missionId?: string; authorName?: string; shortDesc?: string },
     history: {
         outcome?: string;
         leaders?: { discordID?: string; name?: string; side?: string }[];
@@ -47,7 +48,24 @@ function buildSessionEmbed(
     if (history.outcome) bottomParts.push(`**${history.outcome}**`);
     if (leadersLines) bottomParts.push(leadersLines);
     const websiteUrl = process.env.WEBSITE_URL ?? "https://globalconflicts.net";
-    if (mission.uniqueName) bottomParts.push(`[View on website](${websiteUrl}/reforger-missions/${mission.uniqueName})`);
+    if (mission.missionId) bottomParts.push(`[View on website](${websiteUrl}/reforger-missions/${mission.missionId})`);
+
+    // Session time — must be added before sections is assembled so it appears in the description
+    // (Discord only renders <t:epoch:t> timestamps in description/content, not in footer text)
+    const startedAt = history.sessionStartedAt ?? activeSession.startedAt;
+    const endedAt = history.sessionEndedAt;
+    if (hasOutcome && startedAt && endedAt) {
+        const durationMs = new Date(endedAt).getTime() - new Date(startedAt).getTime();
+        const totalMin = Math.round(durationMs / 60000);
+        const hours = Math.floor(totalMin / 60);
+        const mins = totalMin % 60;
+        const durationStr = hours > 0 ? `${hours}h ${mins}min` : `${mins} min`;
+        bottomParts.push(`Session duration: ${durationStr}`);
+    } else if (startedAt) {
+        const unixTimestamp = Math.floor(new Date(startedAt).getTime() / 1000);
+        bottomParts.push(`Session started <t:${unixTimestamp}:t>`);
+    }
+
     const sections: string[] = [topSection];
     if (mission.shortDesc) sections.push(mission.shortDesc);
     if (bottomParts.length > 0) sections.push(bottomParts.join("\n"));
@@ -59,23 +77,7 @@ function buildSessionEmbed(
     else if (outcomeLC.includes("indfor")) color = "#00c000";
     else if (outcomeLC.includes("draw") || outcomeLC.includes("neutral") || outcomeLC.includes("failed")) color = "#888888";
 
-    // Footer: show duration when outcome is set and both timestamps exist; otherwise show start time
-    let footer = "";
-    const startedAt = history.sessionStartedAt ?? activeSession.startedAt;
-    const endedAt = history.sessionEndedAt;
-    if (hasOutcome && startedAt && endedAt) {
-        const durationMs = new Date(endedAt).getTime() - new Date(startedAt).getTime();
-        const totalMin = Math.round(durationMs / 60000);
-        const hours = Math.floor(totalMin / 60);
-        const mins = totalMin % 60;
-        const durationStr = hours > 0 ? `${hours}h ${mins}min` : `${mins} min`;
-        footer = `Session duration: ${durationStr}`;
-    } else if (startedAt) {
-        const startTime = new Date(startedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-        footer = `Session started  ${startTime}`;
-    }
-
-    return { description: sections.join("\n\n"), color, footer };
+    return { description: sections.join("\n\n"), color, footer: "" };
 }
 
 const apiRoute = nextConnect({
@@ -93,16 +95,15 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
 	const { uniqueName } = req.query;
 
 	const session = await getServerSession(req, res, authOptions);
-	const isAdmin = hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM])
+	// TEMPORARY: Mission Review Team has the same access as Arma GM until GMs
+	// are more familiar with the system. Remove CREDENTIAL.MISSION_REVIEWER when no longer needed.
+	const isAdmin = hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM, CREDENTIAL.MISSION_REVIEWER])
 	if(!isAdmin){
 		return res.status(401).json({ error: `Not Authorized` });
 	}
 
 	const db = (await MyMongo).db("prod");
-	const mission = await db.collection("reforger_missions").findOne(
-		{ uniqueName: uniqueName },
-		{ projection: { missionId: 1, uniqueName: 1 } }
-	);
+	const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1 });
 	if (!mission) {
 		return res.status(200).json([]);
 	}
@@ -114,6 +115,11 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
 	);
 
 	if (metadata && metadata["history"]) {
+		// Filter out skeletons for non-privileged users
+		if (!isAdmin) {
+			metadata["history"] = metadata["history"].filter((h: any) => !h.isSkeleton);
+		}
+
 		metadata["history"].sort((a, b) => {
 			return new Date(b.date).getTime() - new Date(a.date).getTime();
 		});
@@ -153,31 +159,33 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 	const history = req.body;
 	history["_id"] = new ObjectId(history["_id"]);
 	history["date"] = new Date(history["date"]);
+    if (history["serverSessionId"]) {
+        history["serverSessionId"] = new ObjectId(history["serverSessionId"]);
+    }
 	const session = await getServerSession(req, res, authOptions);
-	const isAdmin = hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM])
+	// TEMPORARY: Mission Review Team has the same access as Arma GM until GMs
+	// are more familiar with the system. Remove CREDENTIAL.MISSION_REVIEWER when no longer needed.
+	const isAdmin = hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM, CREDENTIAL.MISSION_REVIEWER])
 	if(!isAdmin){
 		return res.status(401).json({ error: `Not Authorized` });
 	}
 
 	const db = (await MyMongo).db("prod");
-	const mission = await db.collection("reforger_missions").findOne(
-		{ uniqueName: uniqueName },
-		{ projection: { missionId: 1, uniqueName: 1, name: 1, authorID: 1 } }
-	);
+	const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1, name: 1, authorID: 1 });
 	if (!mission) {
 		return res.status(404).json({ error: "Mission not found" });
 	}
 
 	const missionId = mission.missionId || mission.uniqueName;
 
-	const updateResult = await db.collection("reforger_mission_metadata").updateOne(
-		{ missionId: missionId },
-		{
-			$addToSet: { history: history },
-			$set: { lastPlayed: history["date"] },
-		},
-		{ upsert: true }
-	);
+    const updateResult = await db.collection("reforger_mission_metadata").updateOne(
+        { missionId: missionId },
+        {
+            $addToSet: { history: history },
+            $set: { lastPlayed: history["date"] },
+        },
+        { upsert: true }
+    );
 
     if (updateResult.modifiedCount > 0 || updateResult.upsertedCount > 0) {
         const metadata = await db.collection("reforger_mission_metadata").findOne({ missionId: missionId });
@@ -218,10 +226,7 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
     // discordMessageId/threadId come from the session selector in the UI.
     if (history.discordMessageId && history.discordThreadId) {
         try {
-            const missionFull = await db.collection("reforger_missions").findOne(
-                { uniqueName: uniqueName },
-                { projection: { name: 1, type: 1, size: 1, uniqueName: 1, descriptionNoMarkdown: 1, description: 1, authorID: 1, missionMaker: 1 } }
-            );
+            const missionFull = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, name: 1, type: 1, size: 1, uniqueName: 1, descriptionNoMarkdown: 1, description: 1, authorID: 1, missionMaker: 1 });
             const authorUser = missionFull?.authorID
                 ? await db.collection("users").findOne(
                     { discord_id: missionFull.authorID },
@@ -233,7 +238,7 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
                 name: (missionFull ?? mission).name,
                 type: missionFull?.type,
                 size: missionFull?.size,
-                uniqueName: missionFull?.uniqueName,
+                missionId: missionFull?.missionId,
                 authorName: await (async () => {
                     let n = authorUser?.nickname ?? authorUser?.globalName ?? authorUser?.username ?? null;
                     if (!n && missionFull?.missionMaker) {
@@ -246,12 +251,32 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
                 shortDesc: rawDesc.length > 200 ? rawDesc.slice(0, 197) + "…" : rawDesc || null,
             };
             const embed = buildSessionEmbed(missionForEmbed, history, {});
-            await callBotEditMessage({
+            const editResult = await callBotEditMessage({
                 messageId: history.discordMessageId,
                 threadId: history.discordThreadId,
                 embed,
                 ...(history.outcome ? { addReactions: true, uniqueName: uniqueName as string, historyEntryId: history._id.toString() } : {}),
             } as any);
+            // When the bot replaces the message (outcome added), persist the new messageId so
+            // future edits and the session selector always reference the live message.
+            if (editResult?.newMessageId) {
+                const oldMsgId = history.discordMessageId;
+                const newMsgId = editResult.newMessageId;
+                const guildId = process.env.DISCORD_GUILD_ID;
+                const newMsgUrl = guildId
+                    ? `https://discord.com/channels/${guildId}/${history.discordThreadId}/${newMsgId}`
+                    : null;
+                await Promise.all([
+                    db.collection("reforger_mission_metadata").updateOne(
+                        { missionId, "history._id": history._id },
+                        { $set: { "history.$.discordMessageId": newMsgId, ...(newMsgUrl && { "history.$.discordMessageUrl": newMsgUrl }) } }
+                    ),
+                    db.collection("configs").updateOne(
+                        { "sessionHistory.messageId": oldMsgId },
+                        { $set: { "sessionHistory.$.messageId": newMsgId, ...(newMsgUrl && { "sessionHistory.$.discordMessageUrl": newMsgUrl }) } }
+                    ),
+                ]);
+            }
         } catch (err) {
             console.error("Discord edit-message error:", err);
         }
@@ -274,16 +299,21 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
 	const history = req.body;
 	history["_id"] = new ObjectId(history["_id"]);
 	history["date"] = new Date(history["date"]);
+	if (history["serverSessionId"]) {
+		try { history["serverSessionId"] = new ObjectId(history["serverSessionId"]); }
+		catch { history["serverSessionId"] = null; }
+	} else {
+		history["serverSessionId"] = null;
+	}
     const session = await getServerSession(req, res, authOptions);
-	if (!hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM])) {
+	// TEMPORARY: Mission Review Team has the same access as Arma GM until GMs
+	// are more familiar with the system. Remove CREDENTIAL.MISSION_REVIEWER when no longer needed.
+	if (!hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM, CREDENTIAL.MISSION_REVIEWER])) {
 		return res.status(401).json({ error: "Not Authorized" });
 	}
 
 	const db = (await MyMongo).db("prod");
-	const mission = await db.collection("reforger_missions").findOne(
-		{ uniqueName: uniqueName },
-		{ projection: { missionId: 1, uniqueName: 1, name: 1, authorID: 1 } }
-	);
+	const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1, name: 1, authorID: 1 });
 	if (!mission) {
 		return res.status(404).json({ error: "Mission not found" });
 	}
@@ -329,10 +359,7 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
     // ── Update Discord live-session message if the client provided explicit IDs ──
     if (history.discordMessageId && history.discordThreadId) {
         try {
-            const missionFull = await db.collection("reforger_missions").findOne(
-                { uniqueName: uniqueName },
-                { projection: { name: 1, type: 1, size: 1, uniqueName: 1, descriptionNoMarkdown: 1, description: 1, authorID: 1, missionMaker: 1 } }
-            );
+            const missionFull = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, name: 1, type: 1, size: 1, uniqueName: 1, descriptionNoMarkdown: 1, description: 1, authorID: 1, missionMaker: 1 });
             const authorUser = missionFull?.authorID
                 ? await db.collection("users").findOne(
                     { discord_id: missionFull.authorID },
@@ -344,7 +371,7 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
                 name: (missionFull ?? mission).name,
                 type: missionFull?.type,
                 size: missionFull?.size,
-                uniqueName: missionFull?.uniqueName,
+                missionId: missionFull?.missionId,
                 authorName: await (async () => {
                     let n = authorUser?.nickname ?? authorUser?.globalName ?? authorUser?.username ?? null;
                     if (!n && missionFull?.missionMaker) {
@@ -357,12 +384,32 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
                 shortDesc: rawDesc.length > 200 ? rawDesc.slice(0, 197) + "…" : rawDesc || null,
             };
             const embed = buildSessionEmbed(missionForEmbed, history, {});
-            await callBotEditMessage({
+            const editResult = await callBotEditMessage({
                 messageId: history.discordMessageId,
                 threadId: history.discordThreadId,
                 embed,
                 ...(history.outcome ? { addReactions: true, uniqueName: uniqueName as string, historyEntryId: history._id.toString() } : {}),
             } as any);
+            // When the bot replaces the message (outcome added), persist the new messageId so
+            // future edits and the session selector always reference the live message.
+            if (editResult?.newMessageId) {
+                const oldMsgId = history.discordMessageId;
+                const newMsgId = editResult.newMessageId;
+                const guildId = process.env.DISCORD_GUILD_ID;
+                const newMsgUrl = guildId
+                    ? `https://discord.com/channels/${guildId}/${history.discordThreadId}/${newMsgId}`
+                    : null;
+                await Promise.all([
+                    db.collection("reforger_mission_metadata").updateOne(
+                        { missionId, "history._id": history._id },
+                        { $set: { "history.$.discordMessageId": newMsgId, ...(newMsgUrl && { "history.$.discordMessageUrl": newMsgUrl }) } }
+                    ),
+                    db.collection("configs").updateOne(
+                        { "sessionHistory.messageId": oldMsgId },
+                        { $set: { "sessionHistory.$.messageId": newMsgId, ...(newMsgUrl && { "sessionHistory.$.discordMessageUrl": newMsgUrl }) } }
+                    ),
+                ]);
+            }
         } catch (err) {
             console.error("Discord edit-message error:", err);
         }
@@ -386,7 +433,9 @@ apiRoute.delete(async (req: NextApiRequest, res: NextApiResponse) => {
 		console.log("DELETE request received");
 
 		const session = await getServerSession(req, res, authOptions);
-		const isAdmin = hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM])
+		// TEMPORARY: Mission Review Team has the same access as Arma GM until GMs
+		// are more familiar with the system. Remove CREDENTIAL.MISSION_REVIEWER when no longer needed.
+		const isAdmin = hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.GM, CREDENTIAL.MISSION_REVIEWER])
 		if(!isAdmin){
 			return res.status(401).json({ error: `Not Authorized` });
 		}
@@ -399,10 +448,7 @@ apiRoute.delete(async (req: NextApiRequest, res: NextApiResponse) => {
 		}
 
 		const db = (await MyMongo).db("prod");
-		const mission = await db.collection("reforger_missions").findOne(
-			{ uniqueName: uniqueName },
-			{ projection: { missionId: 1, uniqueName: 1, name: 1 } }
-		);
+		const mission = await findReforgerMissionBySlug(db, String(uniqueName), { missionId: 1, uniqueName: 1, name: 1 });
 		if (!mission) {
 			return res.status(404).json({ error: "Mission not found" });
 		}
