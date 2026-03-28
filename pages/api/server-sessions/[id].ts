@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from "next";
 import nextConnect from "next-connect";
-import { ObjectId } from "mongodb";
+import { ObjectId } from "bson";
 import MyMongo from "../../../lib/mongodb";
 import { CREDENTIAL } from "../../../middleware/check_auth_perms";
 import { getServerSession } from "next-auth/next";
@@ -23,8 +23,15 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
     }
 
     const { id } = req.query;
+    let objectId: ObjectId;
+    try {
+        objectId = new ObjectId(id as string);
+    } catch (err) {
+        return res.status(400).json({ error: "Invalid session ID format" });
+    }
+
     const db = (await MyMongo).db("prod");
-    const doc = await db.collection("server_sessions").findOne({ _id: new ObjectId(id as string) });
+    const doc = await db.collection("server_sessions").findOne({ _id: objectId });
 
     if (!doc) return res.status(404).json({ error: "Session not found" });
 
@@ -40,6 +47,13 @@ apiRoute.patch(async (req: NextApiRequest, res: NextApiResponse) => {
     const { id } = req.query;
     const { missionUniqueName } = req.body;
 
+    let objectId: ObjectId;
+    try {
+        objectId = new ObjectId(id as string);
+    } catch (err) {
+        return res.status(400).json({ error: "Invalid session ID format" });
+    }
+
     const db = (await MyMongo).db("prod");
 
     let update: any;
@@ -51,7 +65,7 @@ apiRoute.patch(async (req: NextApiRequest, res: NextApiResponse) => {
     }
 
     await db.collection("server_sessions").updateOne(
-        { _id: new ObjectId(id as string) },
+        { _id: objectId },
         update
     );
 
@@ -65,8 +79,16 @@ apiRoute.delete(async (req: NextApiRequest, res: NextApiResponse) => {
     }
 
     const { id } = req.query;
+    
+    let objectId: ObjectId;
+    try {
+        objectId = new ObjectId(id as string);
+    } catch (err) {
+        return res.status(400).json({ error: "Invalid session ID format" });
+    }
+
     const db = (await MyMongo).db("prod");
-    await db.collection("server_sessions").deleteOne({ _id: new ObjectId(id as string) });
+    await db.collection("server_sessions").deleteOne({ _id: objectId });
 
     res.status(200).json({ ok: true });
 });

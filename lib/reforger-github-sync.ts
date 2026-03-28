@@ -5,8 +5,10 @@ import { ObjectId } from "mongodb";
 import { makeSafeName } from "./missionsHelpers";
 import fs from "fs";
 import { logReforgerAction, LOG_ACTION } from "./logging";
+import dns from "dns";
 
-
+// Fix for Node 17+ resolving IPv6 first and throwing ENOTFOUND on environments without IPv6 routing
+dns.setDefaultResultOrder("ipv4first");
 
 const GITHUB_API_BASE = "https://api.github.com/repos/Global-Conflicts-ArmA/gc-reforger-missions";
 const GITHUB_RAW_BASE = "https://raw.githubusercontent.com/Global-Conflicts-ArmA/gc-reforger-missions/master";

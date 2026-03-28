@@ -4,7 +4,7 @@ import MyMongo from "../../../../../lib/mongodb";
 import { CREDENTIAL } from "../../../../../middleware/check_auth_perms";
 import { ObjectId } from "bson";
 import axios from "axios";
-import { postNewMissionHistory, callBotEditMessage } from "../../../../../lib/discordPoster";
+import { callBotEditMessage } from "../../../../../lib/discordPoster";
 import { hasCredsAny } from "../../../../../lib/credsChecker";
 import { getServerSession } from "next-auth";
 import { authOptions } from "../../../auth/[...nextauth]";
@@ -198,30 +198,7 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
         }
     }
 
-    if (process.env.NODE_ENV !== 'development') {
-        try {
-            const botResponse = await axios.get(
-                `${process.env.BOT_URL ?? "http://globalconflicts.net:3001"}/users/${mission.authorID}`,
-                { timeout: 5000 }
-            );
 
-            postNewMissionHistory({
-                leaders: history.leaders,
-                isNew: true,
-                name: mission.name,
-                uniqueName: uniqueName as string,
-                author: botResponse.data.nickname ?? botResponse.data.displayName,
-                authorId: botResponse.data.userId,
-                displayAvatarURL: botResponse.data.displayAvatarURL,
-                outcome: history.outcome,
-                gmNote: history.gmNote,
-                aarReplayLink: history.aarReplayLink,
-                discordThreadId: history.discordThreadId,
-            });
-        } catch (error) {
-            console.error("Error posting history to Discord:", error);
-        }
-    }
 
     // ── Update Discord live-session message if the client provided explicit IDs ──
     // discordMessageId/threadId come from the session selector in the UI.
@@ -333,30 +310,7 @@ apiRoute.put(async (req: NextApiRequest, res: NextApiResponse) => {
 		}
 	);
 
-    if (process.env.NODE_ENV !== 'development') {
-        try {
-            const botResponse = await axios.get(
-                `${process.env.BOT_URL ?? "http://globalconflicts.net:3001"}/users/${mission.authorID}`,
-                { timeout: 5000 }
-            );
 
-            postNewMissionHistory({
-                leaders: history.leaders,
-                isNew: false,
-                name: mission.name,
-                uniqueName: uniqueName as string,
-                author: botResponse.data.nickname ?? botResponse.data.displayName,
-                authorId: botResponse.data.userId,
-                displayAvatarURL: botResponse.data.displayAvatarURL,
-                outcome: history.outcome,
-                gmNote: history.gmNote,
-                aarReplayLink: history.aarReplayLink,
-                discordThreadId: history.discordThreadId,
-            });
-        } catch (error) {
-            console.error("Error posting history update to Discord:", error);
-        }
-    }
 
     // ── Update Discord live-session message if the client provided explicit IDs ──
     if (history.discordMessageId && history.discordThreadId) {

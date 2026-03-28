@@ -763,7 +763,7 @@ export default function MissionDetails({
 
 
 							style={{ paddingTop: 1, paddingBottom: 5 }}
-							className="text-2xl">{selectedRating?.emoji} </span> <span className="flex-1 p-2 text-sm">{selectedRating?.name ?? "Rate this mission"} </span>
+							className="text-2xl">{selectedRating?.emoji} </span> <span className="flex-1 p-2 text-sm">{selectedRating?.name ?? "Rate this specific session"} </span>
 						<ChevronDoubleDownIcon spacing={0} height={15} className={` transition-all mr-2 duration-150 ${open ? 'rotate-180' : 'rotate-0'}`} /></Listbox.Button>
 					<Transition
 						show={open}
@@ -841,9 +841,9 @@ export default function MissionDetails({
 
 
 	const possibleRatings = [
-		{ value: "positive", emoji: "👍", name: 'The mission is well made and interesting' },
-		{ value: "neutral", emoji: "🆗", name: 'It\'s alright ' },
-		{ value: "negative", emoji: "👎", name: 'The mission has concept issues' }
+		{ value: "positive", emoji: "👍", name: 'Good - I liked this mission.' },
+		{ value: "neutral", emoji: "🆗", name: 'Okay - This mission was fine.' },
+		{ value: "negative", emoji: "👎", name: 'Bad - I did not like this mission.' }
 	]
 
 	const [selectedRating, setSelectedRating] = useState<any>(
