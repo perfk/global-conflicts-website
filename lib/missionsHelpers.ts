@@ -123,7 +123,7 @@ export async function findReforgerMissionBySlug(
 	slug: string,
 	projection?: Record<string, 0 | 1>
 ) {
-	const filter = { $or: [{ uniqueName: slug }, { missionId: slug }] };
+	const filter = { $or: [{ uniqueName: slug }, { missionId: slug }, { previousSlugs: slug }] };
 	const options = projection ? { projection } : {};
 	return db.collection("reforger_missions").findOne(filter, options);
 }

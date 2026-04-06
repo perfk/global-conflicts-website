@@ -1268,6 +1268,32 @@ export default function MissionDetails({
               </div>
             )}
 
+            {hasCredsAny(session, [CREDENTIAL.ADMIN, CREDENTIAL.MISSION_REVIEWER]) && (
+              <div data-tip="Regenerate URL slug from mission name" className="z-10 ml-2 tooltip tooltip-bottom">
+                <button
+                  className="btn btn-sm btn-secondary"
+                  onClick={() => {
+                    if (confirm("Are you sure you want to regenerate the URL slug? This may break existing links to this mission.")) {
+                      axios.post(`/api/reforger-missions/${mission.uniqueName}/regenerate_slug`)
+                        .then((res) => {
+                          if (res.data.changed) {
+                            toast.success(`Slug regenerated: ${res.data.uniqueName}`);
+                            setTimeout(() => { window.location.href = `/reforger-missions/${res.data.uniqueName}`; }, 1000);
+                          } else {
+                            toast.info("Slug is already up to date.");
+                          }
+                        })
+                        .catch((err) => {
+                          toast.error(err?.response?.data?.error || "Failed to regenerate slug.");
+                        });
+                    }
+                  }}
+                >
+                  Regenerate Slug
+                </button>
+              </div>
+            )}
+
             {/* {canUnlist() && (
               <div
                 data-tip={
@@ -1873,7 +1899,7 @@ export async function getServerSideProps(context) {
     await db.collection("reforger_missions")
       .aggregate([
         {
-          $match: { $or: [{ uniqueName: context.params.uniqueName }, { missionId: context.params.uniqueName }] },
+          $match: { $or: [{ uniqueName: context.params.uniqueName }, { missionId: context.params.uniqueName }, { previousSlugs: context.params.uniqueName }] },
         },
         {
           $lookup: {
