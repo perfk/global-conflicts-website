@@ -14,6 +14,7 @@ export default function EditMetadataModal({
     const [era, setEra] = useState("");
     const [tag, setTag] = useState("");
     const [missionGroup, setMissionGroup] = useState("");
+    const [isUnlisted, setIsUnlisted] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
 
     useEffect(() => {
@@ -23,6 +24,7 @@ export default function EditMetadataModal({
             setEra(mission.era || "");
             setTag("");
             setMissionGroup(mission.missionGroup || "");
+            setIsUnlisted(mission.isUnlisted || false);
         }
     }, [mission]);
 
@@ -36,13 +38,14 @@ export default function EditMetadataModal({
                 era,
                 tag: tag ? tag : undefined,
                 missionGroup: missionGroup.trim() || null,
+                isUnlisted
             };
 
             await axios.post("/api/reforger-missions/update-metadata", payload);
 
             toast.success("Metadata saved successfully.");
 
-            onUpdate({ status, statusNotes, era, tag, missionGroup: missionGroup.trim() || null });
+            onUpdate({ status, statusNotes, era, tag, missionGroup: missionGroup.trim() || null, isUnlisted });
             onClose();
         } catch (error) {
             toast.error("Failed to save: " + error.response?.data?.error || error.message);
@@ -94,8 +97,19 @@ export default function EditMetadataModal({
                                         <option value="New">New</option>
                                         <option value="Minor issues">Minor issues</option>
                                         <option value="Major issues">Major issues</option>
-                                        <option value="Unavailable">Unavailable</option>
                                     </select>
+                                </div>
+
+                                <div className="form-control">
+                                    <label className="label cursor-pointer justify-start gap-3">
+                                        <input 
+                                            type="checkbox" 
+                                            className="checkbox checkbox-primary" 
+                                            checked={isUnlisted}
+                                            onChange={(e) => setIsUnlisted(e.target.checked)}
+                                        />
+                                        <span className="label-text font-bold">Unlisted (Hide from main list)</span>
+                                    </label>
                                 </div>
 
                                 <div className="form-control">

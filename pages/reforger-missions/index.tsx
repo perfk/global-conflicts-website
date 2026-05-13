@@ -45,13 +45,151 @@ import "react-datepicker/dist/react-datepicker.css";
 
 const ApexChart = dynamic(() => import("react-apexcharts"), { ssr: false });
 
+function SessionAggregationChart() {
+    const [startDate, setStartDate] = useState<Date>(() => {
+        const d = new Date();
+        d.setMonth(d.getMonth() - 6);
+        return d;
+    });
+    const [endDate, setEndDate] = useState<Date>(new Date());
+
+    const params = new URLSearchParams();
+    params.set("startDate", startDate.toISOString());
+    params.set("endDate", endDate.toISOString());
+
+    const { data } = useSWR(`/api/server-sessions/aggregated?${params.toString()}`, fetcher);
+    const aggregated = data?.aggregated ?? [];
+
+    const series = [
+        { name: "Peak", data: aggregated.map(s => s.peak) },
+        { name: "Average", data: aggregated.map(s => s.average) },
+        { name: "Unique", data: aggregated.map(s => s.unique) },
+    ];
+
+    const options: ApexOptions = {
+        chart: {
+            type: 'bar',
+            height: 300,
+            animations: { enabled: false },
+            toolbar: { show: false },
+            background: 'transparent'
+        },
+        plotOptions: {
+            bar: {
+                horizontal: false,
+                columnWidth: '70%',
+                borderRadius: 4
+            },
+        },
+        dataLabels: { enabled: false },
+        stroke: { show: true, width: 2, colors: ['transparent'] },
+        xaxis: {
+            categories: aggregated.map(s => s.label),
+            labels: { rotate: -45, rotateAlways: true, style: { colors: '#9ca3af', fontSize: '10px' } },
+            axisBorder: { show: false },
+            axisTicks: { show: false }
+        },
+        yaxis: { title: { text: "Players", style: { color: '#9ca3af' } }, labels: { style: { colors: '#9ca3af' } } },
+        fill: { opacity: 1 },
+        tooltip: {
+            theme: 'dark',
+            y: { formatter: (val) => `${val} players` }
+        },
+        grid: { borderColor: '#374151', strokeDashArray: 4 },
+        legend: { position: 'top', labels: { colors: '#9ca3af' } },
+        theme: { mode: 'dark' },
+        colors: ['#ef4444', '#3b82f6', '#10b981'] // Red, Blue, Green
+    };
+
+    return (
+        <div className="bg-base-100 dark:bg-gray-900 border border-base-300 dark:border-gray-700 rounded-lg p-4 mt-4 w-full">
+            <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-2">
+                <h2 className="text-sm font-bold uppercase tracking-widest opacity-70 flex items-center gap-2">
+                    <ChartBarIcon className="w-4 h-4 text-primary" />
+                    Comprehensive Session Aggregation
+                </h2>
+                <div className="flex items-center gap-2 text-sm z-50">
+                    <DatePicker
+                        selected={startDate}
+                        onChange={(date: Date) => setStartDate(date)}
+                        dateFormat="MMM d, yyyy"
+                        className="input input-sm input-bordered w-32 bg-base-200 dark:bg-gray-800 text-xs"
+                    />
+                    <span className="opacity-50">to</span>
+                    <DatePicker
+                        selected={endDate}
+                        onChange={(date: Date) => setEndDate(date)}
+                        dateFormat="MMM d, yyyy"
+                        className="input input-sm input-bordered w-32 bg-base-200 dark:bg-gray-800 text-xs"
+                    />
+                </div>
+            </div>
+            {aggregated.length === 0 ? (
+                <div className="h-[300px] flex items-center justify-center text-sm opacity-50 italic">
+                    No session data available
+                </div>
+            ) : (
+                <div className="h-[350px]">
+                    <ApexChart options={options} series={series} type="bar" height={300} />
+                </div>
+            )}
+        </div>
+    );
+}
+
 function PlayerCountChart() {
-	const [startDate, setStartDate] = useState<Date>(() => {
-		const d = new Date();
-		d.setHours(d.getHours() - 8);
-		return d;
-	});
-	const [endDate, setEndDate] = useState<Date>(new Date());
+    const [selectedWeek, setSelectedWeek] = useState<number | 'custom'>(0);
+    const [customStartDate, setCustomStartDate] = useState<Date>(() => {
+        const d = new Date();
+        d.setHours(d.getHours() - 24);
+        return d;
+    });
+    const [customEndDate, setCustomEndDate] = useState<Date>(new Date());
+
+    const { startDate, endDate, weekOptions } = useMemo(() => {
+        const options: { label: string; start: Date; end: Date; value: number }[] = [];
+        const now = new Date();
+        
+        const currentMonday = new Date(now);
+        const day = currentMonday.getDay();
+        const diff = (day === 0 ? -6 : 1) - day;
+        currentMonday.setDate(currentMonday.getDate() + diff);
+        currentMonday.setHours(12, 0, 0, 0);
+
+        if (now < currentMonday) {
+            currentMonday.setDate(currentMonday.getDate() - 7);
+        }
+
+        for (let i = 0; i < 10; i++) {
+            const start = new Date(currentMonday);
+            start.setDate(currentMonday.getDate() - (i * 7));
+            
+            const end = new Date(start);
+            end.setDate(start.getDate() + 7);
+            end.setHours(11, 59, 59, 999);
+
+            options.push({
+                value: i,
+                label: `Week of ${moment(start).format("D MMM")} - ${moment(end).format("D MMM")}`,
+                start,
+                end
+            });
+        }
+
+        if (selectedWeek === 'custom') {
+            return {
+                startDate: customStartDate,
+                endDate: customEndDate,
+                weekOptions: options
+            };
+        }
+
+        return {
+            startDate: options[selectedWeek].start,
+            endDate: options[selectedWeek].end,
+            weekOptions: options
+        };
+    }, [selectedWeek, customStartDate, customEndDate]);
 
 	const params = new URLSearchParams();
 	params.set("startDate", startDate.toISOString());
@@ -64,7 +202,7 @@ function PlayerCountChart() {
 		name: "Players",
 		data: timeline.map((t: any) => ({
 			x: new Date(t.timestamp).getTime(),
-			y: t.players
+			y: t.players === 0 ? null : t.players
 		}))
 	}];
 
@@ -111,26 +249,47 @@ function PlayerCountChart() {
 					<ChartBarIcon className="w-4 h-4 text-primary" />
 					Server Player Count
 				</h2>
-				<div className="flex items-center gap-2 text-sm z-50">
-					<DatePicker
-						selected={startDate}
-						onChange={(date: Date) => setStartDate(date)}
-						showTimeSelect
-						timeFormat="HH:mm"
-						timeIntervals={60}
-						dateFormat="MMM d, HH:mm"
-						className="input input-sm input-bordered w-36 bg-base-200 dark:bg-gray-800 text-xs"
-					/>
-					<span className="opacity-50">to</span>
-					<DatePicker
-						selected={endDate}
-						onChange={(date: Date) => setEndDate(date)}
-						showTimeSelect
-						timeFormat="HH:mm"
-						timeIntervals={60}
-						dateFormat="MMM d, HH:mm"
-						className="input input-sm input-bordered w-36 bg-base-200 dark:bg-gray-800 text-xs"
-					/>
+				<div className="flex flex-wrap items-center gap-3 text-sm z-50">
+                    <div className="flex items-center gap-2">
+                        <span className="opacity-50 text-xs uppercase font-bold tracking-tight">Window:</span>
+                        <select 
+                            value={selectedWeek}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                setSelectedWeek(val === 'custom' ? 'custom' : Number(val));
+                            }}
+                            className="select select-sm select-bordered bg-base-200 dark:bg-gray-800 text-xs"
+                        >
+                            {weekOptions.map(opt => (
+                                <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                            <option value="custom">Custom Range</option>
+                        </select>
+                    </div>
+
+                    {selectedWeek === 'custom' && (
+                        <div className="flex items-center gap-2">
+                            <DatePicker
+                                selected={customStartDate}
+                                onChange={(date: Date) => setCustomStartDate(date)}
+                                showTimeSelect
+                                timeFormat="HH:mm"
+                                timeIntervals={60}
+                                dateFormat="MMM d, HH:mm"
+                                className="input input-sm input-bordered w-36 bg-base-200 dark:bg-gray-800 text-xs"
+                            />
+                            <span className="opacity-50 text-xs">to</span>
+                            <DatePicker
+                                selected={customEndDate}
+                                onChange={(date: Date) => setCustomEndDate(date)}
+                                showTimeSelect
+                                timeFormat="HH:mm"
+                                timeIntervals={60}
+                                dateFormat="MMM d, HH:mm"
+                                className="input input-sm input-bordered w-36 bg-base-200 dark:bg-gray-800 text-xs"
+                            />
+                        </div>
+                    )}
 				</div>
 			</div>
 			{timeline.length === 0 ? (
@@ -146,7 +305,16 @@ function PlayerCountChart() {
 	);
 }
 
+
+
 // Normalise legacy type prefixes that the sync now converts server-side
+function formatMinutes(mins: number | null): string {
+    if (mins == null) return "--";
+    const h = Math.floor(mins / 60);
+    const m = Math.round(mins % 60);
+    return `${h}:${m.toString().padStart(2, "0")}`;
+}
+
 function normalizeType(raw: string | undefined): string {
     const t = raw?.toUpperCase() ?? "OTHER";
     if (t === "SD" || t === "AAS") return "SEED";
@@ -191,12 +359,9 @@ function StatBar({ label, value, max, colorClass, onClick, isActive, isDimmed }:
 }
 
 function getStatusIcon(status, notes) {
-    let icon = <QuestionMarkCircleIcon className="w-6 h-6 text-gray-400" />;
+    let icon = <CheckCircleIcon className="w-6 h-6 text-green-500" />;
 
-    switch(status) {
-        case "No issues":
-            icon = <CheckCircleIcon className="w-6 h-6 text-green-500" />;
-            break;
+    switch (status) {
         case "New":
             icon = <div className="badge badge-info badge-sm">NEW</div>;
             break;
@@ -462,6 +627,57 @@ function ReforgerMissionList({ missions }) {
                     row.lastPlayed ? moment(row.lastPlayed).format("ll") : "--",
                 center: true,
             },
+            {
+                name: "Min Dur",
+                selector: (row) => row.minDuration ?? 0,
+                sortable: true,
+                compact: true,
+                width: "80px",
+                center: true,
+                cell: (row) => (
+                    <div 
+                        data-tag="allowRowEvents" 
+                        className={`text-xs ${row.minDuration ? 'cursor-help tooltip' : 'opacity-40'}`}
+                        data-tip={row.minDuration ? `Data from ${row.durations?.length ?? 0} recorded playthrough(s)` : null}
+                    >
+                        {formatMinutes(row.minDuration)}
+                    </div>
+                ),
+            },
+            {
+                name: "Med Dur",
+                selector: (row) => row.medianDuration ?? 0,
+                sortable: true,
+                compact: true,
+                width: "80px",
+                center: true,
+                cell: (row) => (
+                    <div 
+                        data-tag="allowRowEvents" 
+                        className={`text-xs ${row.medianDuration ? 'cursor-help tooltip' : 'opacity-40'}`}
+                        data-tip={row.medianDuration ? `Data from ${row.durations?.length ?? 0} recorded playthrough(s)` : null}
+                    >
+                        {formatMinutes(row.medianDuration)}
+                    </div>
+                ),
+            },
+            {
+                name: "Max Dur",
+                selector: (row) => row.maxDuration ?? 0,
+                sortable: true,
+                compact: true,
+                width: "80px",
+                center: true,
+                cell: (row) => (
+                    <div 
+                        data-tag="allowRowEvents" 
+                        className={`text-xs ${row.maxDuration ? 'cursor-help tooltip' : 'opacity-40'}`}
+                        data-tip={row.maxDuration ? `Data from ${row.durations?.length ?? 0} recorded playthrough(s)` : null}
+                    >
+                        {formatMinutes(row.maxDuration)}
+                    </div>
+                ),
+            },
         ]
 
         const allDataColumns = [
@@ -575,6 +791,57 @@ function ReforgerMissionList({ missions }) {
                 center: true,
             },
             {
+                name: "Min Dur",
+                selector: (row) => row.minDuration ?? 0,
+                sortable: true,
+                compact: true,
+                width: "80px",
+                center: true,
+                cell: (row) => (
+                    <div 
+                        data-tag="allowRowEvents" 
+                        className={`text-xs ${row.minDuration ? 'cursor-help tooltip' : 'opacity-40'}`}
+                        data-tip={row.minDuration ? `Data from ${row.durations?.length ?? 0} recorded playthrough(s)` : null}
+                    >
+                        {formatMinutes(row.minDuration)}
+                    </div>
+                ),
+            },
+            {
+                name: "Med Dur",
+                selector: (row) => row.medianDuration ?? 0,
+                sortable: true,
+                compact: true,
+                width: "80px",
+                center: true,
+                cell: (row) => (
+                    <div 
+                        data-tag="allowRowEvents" 
+                        className={`text-xs ${row.medianDuration ? 'cursor-help tooltip' : 'opacity-40'}`}
+                        data-tip={row.medianDuration ? `Data from ${row.durations?.length ?? 0} recorded playthrough(s)` : null}
+                    >
+                        {formatMinutes(row.medianDuration)}
+                    </div>
+                ),
+            },
+            {
+                name: "Max Dur",
+                selector: (row) => row.maxDuration ?? 0,
+                sortable: true,
+                compact: true,
+                width: "80px",
+                center: true,
+                cell: (row) => (
+                    <div 
+                        data-tag="allowRowEvents" 
+                        className={`text-xs ${row.maxDuration ? 'cursor-help tooltip' : 'opacity-40'}`}
+                        data-tip={row.maxDuration ? `Data from ${row.durations?.length ?? 0} recorded playthrough(s)` : null}
+                    >
+                        {formatMinutes(row.maxDuration)}
+                    </div>
+                ),
+            },
+            {
                 name: "Mission ID",
                 selector: (row) => row.missionId,
                 sortable: true,
@@ -680,21 +947,23 @@ function ReforgerMissionList({ missions }) {
 
     // --- Stats Dashboard data ---
 
+    const listedMissions = useMemo(() => missions.filter(m => !m.isUnlisted), [missions]);
+
     // Missions filtered by the dashboard's own type-filter (independent of page filters)
     const dashboardMissions = useMemo(() =>
         dashboardTypeFilter
-            ? missions.filter(m => normalizeType(m.type) === dashboardTypeFilter)
-            : missions,
-    [missions, dashboardTypeFilter]);
+            ? listedMissions.filter(m => normalizeType(m.type) === dashboardTypeFilter)
+            : listedMissions,
+    [listedMissions, dashboardTypeFilter]);
 
     const statsTypeData = useMemo(() => {
         const counts: Record<string, number> = {};
-        missions.forEach(m => {
+        listedMissions.forEach(m => {
             const t = normalizeType(m.type);
             counts[t] = (counts[t] || 0) + 1;
         });
         return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    }, [missions]);
+    }, [listedMissions]);
 
     const statsTerrainData = useMemo(() => {
         const counts: Record<string, number> = {};
@@ -764,9 +1033,9 @@ function ReforgerMissionList({ missions }) {
 
     // --- ApexCharts data ---
 
-    // Stacked area: how many missions support each player count (excludes Unavailable)
+    // Stacked area: how many missions support each player count (excludes Unlisted)
     const playerCountCoverageSeries = useMemo(() => {
-        const available = missions.filter(m => m.status !== "Unavailable");
+        const available = listedMissions;
         const cap = available.reduce((acc, m) => Math.max(acc, m.size?.max || 0), 0);
         const maxCount = Math.min(cap, 130);
         const coop: [number, number][] = [], tvt: [number, number][] = [], cotvt: [number, number][] = [];
@@ -781,26 +1050,26 @@ function ReforgerMissionList({ missions }) {
             { name: "COTVT", data: cotvt },
             { name: "COOP",  data: coop },
         ];
-    }, [missions]);
+    }, [listedMissions]);
 
     // Scatter: last played date vs max player count (capped at 128)
     const scatterSeries = useMemo(() => {
-        const data = missions
+        const data = listedMissions
             .filter(m => m.lastPlayed && m.size?.max)
             .map(m => ({ x: Math.min(m.size.max, 128), y: m.lastPlayed, name: m.name }));
         return [{ name: "Mission", data }];
-    }, [missions]);
+    }, [listedMissions]);
 
     // Floating bar: min–max player count per mission (sorted by min, capped at 128)
     const rangeBarSeries = useMemo(() => {
-        const sorted = [...missions]
+        const sorted = [...listedMissions]
             .filter(m => m.size?.min && m.size?.max)
             .sort((a, b) => a.size.min - b.size.min);
         return [
             { name: "Min",   data: sorted.map(m => m.size.min) },
             { name: "Range", data: sorted.map(m => Math.min(m.size.max, 128) - m.size.min) },
         ];
-    }, [missions]);
+    }, [listedMissions]);
 
     // Shared chart style helpers
     const apexAxisLabel = { style: { colors: "#9ca3af", fontSize: "11px" } };
@@ -850,12 +1119,12 @@ function ReforgerMissionList({ missions }) {
             custom: ({ seriesIndex, dataPointIndex, w }) => {
                 const min = w.config.series[0].data[dataPointIndex];
                 const range = w.config.series[1].data[dataPointIndex];
-                const sorted = [...missions].filter(m => m.size?.min && m.size?.max).sort((a, b) => a.size.min - b.size.min);
+                const sorted = [...listedMissions].filter(m => m.size?.min && m.size?.max).sort((a, b) => a.size.min - b.size.min);
                 const mission = sorted[dataPointIndex];
                 return `<div style="padding:8px;font-size:12px;background:#1f2937;border-radius:6px;border:1px solid #374151;color:#e5e7eb"><strong>${mission?.name ?? ""}</strong><br/>${min}–${min + range} players</div>`;
             },
         },
-    }), [missions]);
+    }), [listedMissions]);
 
     // Heatmap: player count buckets (x) × year last played (series/rows)
     const heatmapSeries = useMemo(() => {
@@ -866,7 +1135,7 @@ function ReforgerMissionList({ missions }) {
             const end = Math.min(start + bucketSize - 1, maxCap);
             buckets.push(`${start}-${end}`);
         }
-        const played = missions.filter(m => m.lastPlayed && m.size?.max);
+        const played = listedMissions.filter(m => m.lastPlayed && m.size?.max);
         if (played.length === 0) return [];
         const minYear = new Date(Math.min(...played.map(m => m.lastPlayed))).getFullYear();
         const maxYear = new Date(Math.max(...played.map(m => m.lastPlayed))).getFullYear();
@@ -883,7 +1152,7 @@ function ReforgerMissionList({ missions }) {
                 return { x: bucket, y: count };
             }),
         }));
-    }, [missions]);
+    }, [listedMissions]);
 
     const heatmapOptions = useMemo((): ApexOptions => ({
         chart: { type: "heatmap", background: "transparent", toolbar: { show: false }, animations: { enabled: false } },
@@ -1298,10 +1567,10 @@ function ReforgerMissionList({ missions }) {
 		function filterMissions() {
 			const missionsFound = missions
 				.filter((mission) => {
-					if (!showUnlistedMissions && mission.isUnlisted) {
-						return false;
+					if (showUnlistedMissions) {
+						return mission.isUnlisted;
 					} else {
-						return true;
+						return !mission.isUnlisted;
 					}
 				})
                 .filter(eventMissionsFilter)
@@ -1863,7 +2132,7 @@ function ReforgerMissionList({ missions }) {
 										<div className="bg-base-100 dark:bg-gray-900 border border-base-300 dark:border-gray-700 rounded-lg px-4 py-2 min-w-[120px] flex flex-col justify-between h-20">
 											<div className="text-xs opacity-50 uppercase tracking-widest">Missions</div>
 											<div className="text-2xl font-bold">{dashboardMissions.length}</div>
-											<div className="text-xs opacity-40 h-4">{dashboardTypeFilter ? `of ${missions.length} total` : ""}</div>
+											<div className="text-xs opacity-40 h-4">{dashboardTypeFilter ? `of ${listedMissions.length} total` : ""}</div>
 										</div>
 										<div className="bg-base-100 dark:bg-gray-900 border border-base-300 dark:border-gray-700 rounded-lg px-4 py-2 min-w-[120px] flex flex-col justify-between h-20">
 											<div className="text-xs opacity-50 uppercase tracking-widest">Total Plays</div>
@@ -1965,7 +2234,7 @@ function ReforgerMissionList({ missions }) {
 									{/* Stacked area: missions supporting each player count */}
 									<div>
 										<div className="text-xs uppercase tracking-widest opacity-50 mb-0.5">Missions Supporting Each Player Count</div>
-										<div className="text-xs opacity-30 mb-1">Excludes unavailable missions · TVT / COTVT / COOP</div>
+										<div className="text-xs opacity-30 mb-1">Excludes unlisted missions · TVT / COTVT / COOP</div>
 										<ApexChart type="area" height={220} options={playerCountAreaOptions} series={playerCountCoverageSeries} />
 									</div>
 
@@ -2049,6 +2318,9 @@ function ReforgerMissionList({ missions }) {
 									</div>
 
 									<div className="divider my-0 before:bg-base-300 after:bg-base-300 dark:before:bg-gray-700 dark:after:bg-gray-700" />
+
+									{/* Comprehensive Session Aggregation */}
+									<SessionAggregationChart />
 
 									{/* Player Count Chart */}
 									<PlayerCountChart />
@@ -2193,6 +2465,35 @@ export async function getServerSideProps() {
                             }
                         }
                     }
+                },
+                durations: {
+                    $map: {
+                        input: {
+                            $filter: {
+                                input: { $ifNull: ["$_meta.history", []] },
+                                as: "h",
+                                cond: {
+                                    $and: [
+                                        { $ne: ["$$h.isSkeleton", true] },
+                                        { $ne: ["$$h.sessionStartedAt", null] },
+                                        { $ne: ["$$h.sessionEndedAt", null] }
+                                    ]
+                                }
+                            }
+                        },
+                        as: "h",
+                        in: {
+                            $divide: [
+                                {
+                                    $subtract: [
+                                        { $toDate: "$$h.sessionEndedAt" },
+                                        { $toDate: "$$h.sessionStartedAt" }
+                                    ]
+                                },
+                                60000
+                            ]
+                        }
+                    }
                 }
 			} },
 			{
@@ -2226,6 +2527,22 @@ export async function getServerSideProps() {
 		}
 
 		mission["lastPlayed"] = mission["lastPlayed"]?.getTime?.() ?? mission["lastPlayed"] ?? null;
+
+        const durations = mission["durations"] || [];
+        if (durations.length > 0) {
+            const sorted = [...durations].sort((a, b) => a - b);
+            mission["minDuration"] = Math.round(sorted[0]);
+            mission["maxDuration"] = Math.round(sorted[sorted.length - 1]);
+            
+            const mid = Math.floor(sorted.length / 2);
+            mission["medianDuration"] = sorted.length % 2 !== 0 
+                ? Math.round(sorted[mid]) 
+                : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+        } else {
+            mission["minDuration"] = null;
+            mission["maxDuration"] = null;
+            mission["medianDuration"] = null;
+        }
 		
         const terrainGuid = mission["terrain"];
         if (terrainGuid) {

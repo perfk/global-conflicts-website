@@ -1,6 +1,6 @@
 import { Dialog, Transition } from "@headlessui/react";
 import React, { Fragment, useState, useEffect } from "react";
-import { RefreshIcon, CalendarIcon, UploadIcon, TrashIcon, ChevronDownIcon, ChevronUpIcon } from "@heroicons/react/outline";
+import { RefreshIcon, CalendarIcon, UploadIcon, TrashIcon, ChevronDownIcon, ChevronUpIcon, DownloadIcon, ServerIcon } from "@heroicons/react/outline";
 import DateSelectionModal from "./date_selection_modal";
 import axios from "axios";
 import { toast } from "react-toastify";
@@ -738,6 +738,68 @@ export default function AdminControlsModal({
                                                 {!isDeleting && <TrashIcon className="w-4 h-4 mr-2" />}
                                                 Delete All Missions
                                             </button>
+
+                                            <div className="divider my-1"></div>
+
+                                            <div className="flex gap-2">
+                                                <button
+                                                    className="btn btn-info btn-outline flex-1"
+                                                    onClick={async () => {
+                                                        try {
+                                                            const res = await axios.get("/api/admin/export-db", { responseType: 'blob' });
+                                                            const url = window.URL.createObjectURL(new Blob([res.data]));
+                                                            const link = document.createElement('a');
+                                                            link.href = url;
+                                                            link.setAttribute('download', `gc_db_export_${new Date().toISOString().split('T')[0]}.json`);
+                                                            document.body.appendChild(link);
+                                                            link.click();
+                                                            link.remove();
+                                                            toast.success("Database exported successfully!");
+                                                        } catch (e: any) {
+                                                            toast.error("Export failed: " + e.message);
+                                                        }
+                                                    }}
+                                                >
+                                                    <DownloadIcon className="w-4 h-4 mr-2" />
+                                                    Export Database
+                                                </button>
+
+                                                {process.env.NODE_ENV === 'development' && (
+                                                    <label className="flex-1">
+                                                        <input 
+                                                            type="file" 
+                                                            accept=".json"
+                                                            className="hidden"
+                                                            onChange={async (e) => {
+                                                                const file = e.target.files?.[0];
+                                                                if (!file) return;
+                                                                if (!confirm("This will OVERWRITE your local database. Proceed?")) {
+                                                                    e.target.value = '';
+                                                                    return;
+                                                                }
+
+                                                                toast.info("Importing database... This may take a minute.");
+                                                                const reader = new FileReader();
+                                                                reader.onload = async (event) => {
+                                                                    try {
+                                                                        const data = JSON.parse(event.target?.result as string);
+                                                                        await axios.post("/api/admin/import-db", data);
+                                                                        toast.success("Database imported successfully!");
+                                                                        window.location.reload();
+                                                                    } catch (err: any) {
+                                                                        toast.error("Import failed: " + (err.response?.data?.error || err.message));
+                                                                    }
+                                                                    e.target.value = '';
+                                                                };
+                                                                reader.readAsText(file);
+                                                            }}
+                                                        />
+                                                        <div className="btn btn-warning w-full flex items-center justify-center gap-2 cursor-pointer">
+                                                            <ServerIcon className="w-4 h-4" />
+                                                            Import DB (Dev)
+                                                        </div>
+                                                    </label>
+                                                )}                                            </div>
                                         </div>
                                     </div>
                                 )}

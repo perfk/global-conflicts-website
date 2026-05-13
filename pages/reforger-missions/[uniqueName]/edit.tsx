@@ -71,6 +71,8 @@ function EditReforgerMission({ mission }) {
 	}, [mission.terrain, mission.mediaFileName]);
 
 	const [isLoading, setIsLoading] = useState(false);
+	const [debugData, setDebugData] = useState<any>(null);
+	const [isLoadingDebug, setIsLoadingDebug] = useState(false);
 
 	const missionFormik = useFormik({
 		initialValues: {
@@ -98,6 +100,7 @@ function EditReforgerMission({ mission }) {
 			status: { value: mission.status, label: mission.status },
 			statusNotes: mission.statusNotes || "",
 			missionGroup: mission.missionGroup || "",
+			isUnlisted: mission.isUnlisted || false,
 			media: null,
 		},
 		validate: (fields) => {
@@ -218,6 +221,7 @@ function EditReforgerMission({ mission }) {
 					status: values.status?.value,
 					statusNotes: values.statusNotes,
 					missionGroup: values.missionGroup.trim() || null,
+					isUnlisted: values.isUnlisted,
 				});
 
 				toast.done(uploadProgressToast.current);
@@ -269,9 +273,21 @@ function EditReforgerMission({ mission }) {
 									{ value: "New", label: "New" },
 									{ value: "Minor issues", label: "Minor issues" },
 									{ value: "Major issues", label: "Major issues" },
-									{ value: "Unavailable", label: "Unavailable" },
 								]}
 							/>
+						</div>
+
+						<div className="flex-1 min-w-0 form-control">
+							<label className="label cursor-pointer justify-start gap-3 h-full">
+								<input 
+									type="checkbox" 
+									className="checkbox checkbox-primary" 
+									name="isUnlisted"
+									checked={missionFormik.values.isUnlisted}
+									onChange={missionFormik.handleChange}
+								/>
+								<span className="label-text font-bold">Unlisted (Hide from main list)</span>
+							</label>
 						</div>
 
 						<div className="flex-1 min-w-0 form-control">
@@ -658,6 +674,35 @@ function EditReforgerMission({ mission }) {
 						</button>
 					</div>
 				</form>
+
+				<div className="mt-10 p-5 border border-gray-300 dark:border-gray-700 rounded-lg">
+					<h3 className="text-lg font-bold mb-4 dark:text-gray-200">Debug Database Info</h3>
+					<p className="text-sm text-gray-500 mb-4">
+						Dump all database details for this mission.
+					</p>
+					<button
+						type="button"
+						className={`btn btn-sm btn-outline ${isLoadingDebug ? "loading" : ""}`}
+						onClick={async () => {
+							setIsLoadingDebug(true);
+							try {
+								const res = await axios.get(`/api/reforger-missions/${mission.uniqueName}/debug`);
+								setDebugData(res.data);
+							} catch (e) {
+								toast.error("Failed to load debug data");
+							} finally {
+								setIsLoadingDebug(false);
+							}
+						}}
+					>
+						Load Debug Info
+					</button>
+					{debugData && (
+						<div className="mt-5 max-h-[600px] overflow-auto bg-base-300 p-4 rounded text-xs font-mono text-left">
+							<pre>{JSON.stringify(debugData, null, 2)}</pre>
+						</div>
+					)}
+				</div>
 			</div>
 		</CredentialLockLayout>
 	);
@@ -668,7 +713,7 @@ export async function getServerSideProps(context) {
 	const db = (await MyMongo).db("prod");
 
 	const mission = await db.collection("reforger_missions").findOne(
-		{ $or: [{ uniqueName: context.params.uniqueName }, { missionId: context.params.uniqueName }] },
+		{ $or: [{ uniqueName: context.params.uniqueName }, { missionId: context.params.uniqueName }, { previousSlugs: context.params.uniqueName }] },
 		{
 			projection: {
 				_id: 0,

@@ -94,14 +94,21 @@ export default function SubmitAARModal({
 			});
 	}
 
-	const sessionDateLabel = sessionDate
-		? new Date(sessionDate).toLocaleDateString("en-GB", {
-				weekday: "long",
-				day: "numeric",
-				month: "long",
-				year: "numeric",
-		  })
-		: null;
+	const sessionDateLabel = (() => {
+		if (!sessionDate) return null;
+		const d = new Date(sessionDate);
+		const sessionDateObj = new Date(d);
+		if (d.getUTCHours() < 10) {
+			sessionDateObj.setUTCDate(sessionDateObj.getUTCDate() - 1);
+		}
+		return sessionDateObj.toLocaleDateString("en-GB", {
+			weekday: "long",
+			day: "numeric",
+			month: "long",
+			year: "numeric",
+			timeZone: "UTC",
+		});
+	})();
 
 	const alreadyOnDiscord = !!aarDiscordMessageId;
 

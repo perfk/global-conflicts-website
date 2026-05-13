@@ -40,19 +40,10 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
             ...(item.era && { era: item.era }),
             ...(item.status && { status: item.status }),
             ...(item.statusNotes != null && { statusNotes: item.statusNotes }),
+            isUnlisted: !!item.isUnlisted,
         };
 
         // Handle missionGroup: explicit null clears it, string sets it
-        if (item.missionGroup === null || item.missionGroup === "") {
-            // Will be handled as $unset below
-        } else if (item.missionGroup) {
-            metadataSetFields.missionGroup = item.missionGroup.trim();
-        }
-
-        // Auto-unlist mission if status is 'Unavailable'
-        if (item.status === "Unavailable") {
-            metadataSetFields.isUnlisted = true;
-        }
 
         const updateOps: any = { $set: metadataSetFields };
         if (item.tag) {

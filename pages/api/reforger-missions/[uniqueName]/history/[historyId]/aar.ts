@@ -91,14 +91,21 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 					leaderEntry?.name ?? session.user["username"] ?? "Unknown";
 				const websiteUrl =
 					process.env.WEBSITE_URL ?? "https://globalconflicts.net";
-				const sessionDate = entry?.date
-					? new Date(entry.date).toLocaleDateString("en-GB", {
+				const dateObj = entry?.date ? new Date(entry.date) : null;
+				let sessionDate = "";
+				if (dateObj) {
+					const sessionDateObj = new Date(dateObj);
+					if (dateObj.getUTCHours() < 10) {
+						sessionDateObj.setUTCDate(sessionDateObj.getUTCDate() - 1);
+					}
+					sessionDate = sessionDateObj.toLocaleDateString("en-GB", {
 						weekday: "long",
 						day: "numeric",
 						month: "long",
 						year: "numeric",
-					})
-					: "";
+						timeZone: "UTC",
+					});
+				}
 				const header = sessionDate
 					? `**${mission.name}**
 *Played ${sessionDate}*`

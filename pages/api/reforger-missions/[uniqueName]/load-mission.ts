@@ -216,12 +216,39 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
     // ── Close any PREVIOUS open server sessions ──
     // (Excluding the one we just created)
     try {
+        // Real sessions close with last snapshot time (or now fallback)
         await db.collection("server_sessions").updateMany(
             { 
                 endedAt: null, 
+                isPlaceholder: { $ne: true },
                 _id: { $ne: sessionResult.insertedId } 
             },
-            { $set: { endedAt: now, endReason: "load_event" } }
+            [
+                {
+                    $set: {
+                        endedAt: {
+                            $ifNull: [{ $arrayElemAt: ["$snapshots.time", -1] }, now],
+                        },
+                        endReason: "load_event",
+                    },
+                },
+            ]
+        );
+        // Placeholders close with their own startedAt (0 duration)
+        await db.collection("server_sessions").updateMany(
+            { 
+                endedAt: null, 
+                isPlaceholder: true,
+                _id: { $ne: sessionResult.insertedId } 
+            },
+            [
+                {
+                    $set: {
+                        endedAt: "$startedAt",
+                        endReason: "load_event",
+                    },
+                },
+            ]
         );
     } catch (err) {
         console.error("Previous session close failed:", err);
