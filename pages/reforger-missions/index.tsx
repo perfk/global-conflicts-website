@@ -53,11 +53,14 @@ function SessionAggregationChart() {
     });
     const [endDate, setEndDate] = useState<Date>(new Date());
 
-    const params = new URLSearchParams();
-    params.set("startDate", startDate.toISOString());
-    params.set("endDate", endDate.toISOString());
+    const swrKey = useMemo(() => {
+        const params = new URLSearchParams();
+        params.set("startDate", startDate.toISOString());
+        params.set("endDate", endDate.toISOString());
+        return `/api/server-sessions/aggregated?${params.toString()}`;
+    }, [startDate, endDate]);
 
-    const { data } = useSWR(`/api/server-sessions/aggregated?${params.toString()}`, fetcher);
+    const { data } = useSWR(swrKey, fetcher);
     const aggregated = data?.aggregated ?? [];
 
     const series = [
@@ -111,14 +114,14 @@ function SessionAggregationChart() {
                 <div className="flex items-center gap-2 text-sm z-50">
                     <DatePicker
                         selected={startDate}
-                        onChange={(date: Date) => setStartDate(date)}
+                        onChange={(date: Date | null) => date && setStartDate(date)}
                         dateFormat="MMM d, yyyy"
                         className="input input-sm input-bordered w-32 bg-base-200 dark:bg-gray-800 text-xs"
                     />
                     <span className="opacity-50">to</span>
                     <DatePicker
                         selected={endDate}
-                        onChange={(date: Date) => setEndDate(date)}
+                        onChange={(date: Date | null) => date && setEndDate(date)}
                         dateFormat="MMM d, yyyy"
                         className="input input-sm input-bordered w-32 bg-base-200 dark:bg-gray-800 text-xs"
                     />
@@ -271,7 +274,7 @@ function PlayerCountChart() {
                         <div className="flex items-center gap-2">
                             <DatePicker
                                 selected={customStartDate}
-                                onChange={(date: Date) => setCustomStartDate(date)}
+                                onChange={(date: Date | null) => date && setCustomStartDate(date)}
                                 showTimeSelect
                                 timeFormat="HH:mm"
                                 timeIntervals={60}
@@ -281,7 +284,7 @@ function PlayerCountChart() {
                             <span className="opacity-50 text-xs">to</span>
                             <DatePicker
                                 selected={customEndDate}
-                                onChange={(date: Date) => setCustomEndDate(date)}
+                                onChange={(date: Date | null) => date && setCustomEndDate(date)}
                                 showTimeSelect
                                 timeFormat="HH:mm"
                                 timeIntervals={60}

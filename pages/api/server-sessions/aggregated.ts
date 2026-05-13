@@ -35,7 +35,9 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
             startedAt: { $gte: windowStart, $lte: windowEnd },
             snapshots: { $exists: true, $not: { $size: 0 } }
         }).project({
-            snapshots: 1,
+            "snapshots.time": 1,
+            "snapshots.players": 1,
+            "snapshots.connectedPlayers": 1,
             startedAt: 1
         }).sort({ startedAt: 1 }).toArray();
 
@@ -43,22 +45,40 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
             return res.status(200).json({ aggregated: [] });
         }
 
-        // Flatten all snapshots
-        let allSnapshots: any[] = [];
-        sessions.forEach(s => {
+        // Flatten all snapshots efficiently
+        const allSnapshots: any[] = [];
+        for (const s of sessions) {
             if (s.snapshots) {
-                allSnapshots.push(...s.snapshots);
+                for (const snap of s.snapshots) {
+                    allSnapshots.push(snap);
+                }
             }
-        });
+        }
 
         // Ensure chronological order
         allSnapshots.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
 
         const aggregated: any[] = [];
         let currentSession: any = null;
-        let lastActiveTime: number = 0;
 
         const INACTIVITY_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
+        const finalizeSession = (session: any) => {
+            const startDate = new Date(session.start);
+            const endDate = new Date(session.lastActive);
+            let dateLabel = moment(startDate).format("D MMM (ddd)");
+            if (startDate.getDate() !== endDate.getDate() || startDate.getMonth() !== endDate.getMonth()) {
+                dateLabel = `${moment(startDate).format("D MMM (ddd)")}-${moment(endDate).format("ddd")}`;
+            }
+
+            return {
+                label: dateLabel,
+                timestamp: session.start,
+                peak: session.peak,
+                average: Math.round(session.sumPlayers / session.count),
+                unique: session.uniques.size
+            };
+        };
 
         allSnapshots.forEach(snap => {
             const time = new Date(snap.time).getTime();
@@ -78,19 +98,28 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
                 } else {
                     // Check if we should have ended due to gap, but now we have players again
                     // If the gap was > 30 mins, we should have already closed it.
-                    // But here we just continue if currentSession exists.
-                    currentSession.peak = Math.max(currentSession.peak, players);
-                    currentSession.sumPlayers += players;
-                    currentSession.count += 1;
-                    currentSession.lastActive = time;
-                    Object.keys(snap.connectedPlayers || {}).forEach(id => currentSession.uniques.add(id));
+                    if (time - currentSession.lastActive > INACTIVITY_THRESHOLD_MS) {
+                        aggregated.push(finalizeSession(currentSession));
+                        currentSession = {
+                            start: time,
+                            peak: players,
+                            sumPlayers: players,
+                            count: 1,
+                            uniques: new Set(Object.keys(snap.connectedPlayers || {})),
+                            lastActive: time
+                        };
+                    } else {
+                        currentSession.peak = Math.max(currentSession.peak, players);
+                        currentSession.sumPlayers += players;
+                        currentSession.count += 1;
+                        currentSession.lastActive = time;
+                        Object.keys(snap.connectedPlayers || {}).forEach(id => currentSession.uniques.add(id));
+                    }
                 }
             } else {
                 // Players == 0
                 if (currentSession) {
-                    // Check inactivity
                     if (time - currentSession.lastActive > INACTIVITY_THRESHOLD_MS) {
-                        // Close session
                         aggregated.push(finalizeSession(currentSession));
                         currentSession = null;
                     }
@@ -100,27 +129,6 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
 
         if (currentSession) {
             aggregated.push(finalizeSession(currentSession));
-        }
-
-        function finalizeSession(session: any) {
-            const startDate = new Date(session.start);
-            // Format label: "16 Mar (Sat-Sun)" or similar. 
-            // Sat-Sun if it crosses midnight? Let's just do "16 Mar (Sat)" or similar for simplicity or as requested.
-            // Request: "16 Mar (Sat-Sun)". 
-            // We'll check if it ends on a different day.
-            const endDate = new Date(session.lastActive);
-            let dateLabel = moment(startDate).format("D MMM (ddd)");
-            if (startDate.getDate() !== endDate.getDate()) {
-                dateLabel = `${moment(startDate).format("D MMM (ddd)")}-${moment(endDate).format("ddd")}`;
-            }
-
-            return {
-                label: dateLabel,
-                timestamp: session.start,
-                peak: session.peak,
-                average: Math.round(session.sumPlayers / session.count),
-                unique: session.uniques.size
-            };
         }
 
         return res.status(200).json({ aggregated });
