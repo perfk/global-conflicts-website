@@ -31,7 +31,7 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
 
 	let isMissionReviewer = false;
 	for (var i = 0; i < session.user["roles"].length; i++) {
-		if (session.user["roles"][i].name == "Mission Review Team") {
+		if (session.user["roles"][i].name == "Developer") {
 			isMissionReviewer = true;
 			break;
 		}
