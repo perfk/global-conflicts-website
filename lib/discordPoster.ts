@@ -11,6 +11,10 @@ export async function postDiscordNewMission(body) {
 	const botResponse = await axios.post(`${BOT_URL}/missions/new`, body);
 }
 
+export async function postDiscordNewEvent(body) {
+	const botResponse = await axios.post(`${BOT_URL}/reforger-events/new`, body);
+}
+
 export async function postDiscordMissionUpdate(body) {
 	const botResponse = await axios.post(`${BOT_URL}/missions/update`, body);
 }

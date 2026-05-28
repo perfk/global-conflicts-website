@@ -170,7 +170,7 @@ function EventsDashboardPage() {
 					}, 2000);
 				})
 				.catch((error) => {
-					toast.success("Error submiting event");
+					toast.error("Error submiting event");
 					setIsLoading(false);
 				});
 		},

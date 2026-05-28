@@ -1,3 +1,4 @@
+// V2.1 - Forced Recompile
 import axios from 'axios';
 import { toast } from 'react-toastify';
 
@@ -8,7 +9,7 @@ export async function callReserveSlot(
     eventMissionList
 ) {
     axios
-        .post("/api/events/reserve", {
+        .post("/api/reforger-events/reserve", {
             eventId: event._id,
             eventMissionList
         })
@@ -23,7 +24,7 @@ export async function callReserveSlot(
 
 export async function callCantMakeIt(event, onSuccess, onError, cantMakeIt) {
     axios
-        .post("/api/events/cant_make_it", {
+        .post("/api/reforger-events/cant_make_it", {
             eventId: event._id,
 
             cantMakeIt: cantMakeIt,
@@ -38,7 +39,7 @@ export async function callCantMakeIt(event, onSuccess, onError, cantMakeIt) {
 
 export async function callSignUp(event, onSuccess, onError, doSignup) {
     axios
-        .post("/api/events/sign_up", {
+        .post("/api/reforger-events/sign_up", {
             eventId: event._id,
             doSignup: doSignup,
         })
@@ -114,6 +115,32 @@ export function hasOneReservedSlot(workingEvent) {
 export function getSelectedMission(workingEvent, selectedMission) {
     return workingEvent.eventMissionList.filter((mission => { return mission._id == selectedMission._id }))[0]
 }
+
+export function getFirstMissionSignupCount(roster) {
+    if (!roster || !Array.isArray(roster) || roster.length === 0) {
+        return 0;
+    }
+    const firstMission = roster[0];
+    const uniquePlayers = new Set();
+
+    firstMission.factions?.forEach(faction => {
+        // Handle both grouped and ungrouped slots
+        if (faction.groups) {
+            faction.groups.forEach(group => {
+                group.slots?.forEach(slot => {
+                    slot.players?.forEach(player => uniquePlayers.add(player));
+                });
+            });
+        } else if (faction.slots) {
+            faction.slots.forEach(slot => {
+                slot.players?.forEach(player => uniquePlayers.add(player));
+            });
+        }
+    });
+
+    return uniquePlayers.size;
+}
+
 export function getRadioOptionClasses(checked, isFull) {
     if (checked && isFull) {
         return "bg-primary cursor-pointer"

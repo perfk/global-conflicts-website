@@ -4,7 +4,7 @@ import { useSession } from "next-auth/react";
 import Link from "next/link";
 import React, { Fragment, useEffect, useRef, useState } from "react";
 import classNames from "../../lib/classnames";
-import { getRadioOptionClasses, getSelectedMission, getSelectedSlotNameForMission, getSlottedCount, hasOneReservedSlot } from '../../lib/eventhelpers';
+import { getRadioOptionClasses, getSelectedMission, getSelectedSlotNameForMission, getSlottedCount, hasOneReservedSlot } from '../../lib/reforger_eventhelpers';
 
 export default function SlotSelectionModal({
 	isOpen,
