@@ -61,13 +61,35 @@ export async function extractMissionFactions(worldFolder: string, tree: GitHubTr
     );
 
     // 2. Find all distinct NEW_FACTION codes from Prefabs/Groups/...
-    // Matches: Prefabs/Groups/{old_faction}/{NEW_FACTION}/..._P.et
-    const groupRegex = /Prefabs\/Groups\/[^/]+\/([^/]+)\/[^"]+_P\.et/gi;
+    // Matches: Prefabs/Groups/{SIDE}/{FACTION}/{GROUP}.et OR Prefabs/Groups/{SIDE}/{GROUP}.et
+    // We use [^/"]+ to prevent matching across slashes or quotes (fixes "codeblock" bug)
+    const groupRegex = /Prefabs\/Groups\/([^\/"]+)\/(?:([^\/"]+)\/)?([^\/"]+\.et)/gi;
     for (const file of layerContents) {
         if (!file.content) continue;
         let match;
         while ((match = groupRegex.exec(file.content)) !== null) {
-            const factionCode = match[1];
+            const segment1 = match[1];
+            const segment2 = match[2];
+            
+            let factionCode = segment2 || segment1;
+            
+            // If we only have 2 segments and segment1 is a generic side, try to extract faction from filename
+            // Example: Prefabs/Groups/INDFOR/Group_FIA_Platoon_P.et -> extract FIA
+            // Example: Prefabs/Groups/OPFOR/hc3_Group_USSR_CompanyHQ_P.et -> extract USSR
+            if (!segment2 && ["BLUFOR", "OPFOR", "INDFOR", "FACTIONS"].includes(segment1.toUpperCase())) {
+                const filename = match[3];
+                // Strip .et extension before splitting by _
+                const nameOnly = filename.replace(/\.et$/i, "");
+                const fileParts = nameOnly.split('_');
+                const groupIdx = fileParts.findIndex(p => p.toLowerCase() === "group");
+                if (groupIdx !== -1 && fileParts.length > groupIdx + 1) {
+                    factionCode = fileParts[groupIdx + 1];
+                }
+            }
+
+            // Cleanup faction code - remove any remaining quotes or garbage
+            factionCode = factionCode.replace(/["]/g, "");
+
             if (!foundFactions.has(factionCode)) {
                 foundFactions.set(factionCode, { code: factionCode, id: null, name: factionCode, color: null });
             }

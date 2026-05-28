@@ -27,20 +27,30 @@ apiRoute.get(async (req: NextApiRequest, res: NextApiResponse) => {
         const db = (await MyMongo).db("prod");
 
         const [missions, configDoc] = await Promise.all([
-            db.collection("reforger_missions").find({ factions: { $exists: true, $ne: [] } }).project({ factions: 1 }).toArray(),
+            db.collection("reforger_missions").find({ factions: { $exists: true, $ne: [] } }).project({ factions: 1, name: 1 }).toArray(),
             db.collection("configs").findOne({}, { projection: { faction_mappings: 1 } })
         ]);
 
-        const distinctCodes = new Set<string>();
+        const codeToMissions = new Map<string, string[]>();
         for (const m of missions) {
             if (Array.isArray(m.factions)) {
                 for (const f of m.factions) {
-                    if (f.code) distinctCodes.add(f.code);
+                    if (f.code) {
+                        if (!codeToMissions.has(f.code)) codeToMissions.set(f.code, []);
+                        const currentList = codeToMissions.get(f.code);
+                        if (currentList.length < 5 && !currentList.includes(m.name)) {
+                            currentList.push(m.name);
+                        }
+                    }
                 }
             }
         }
 
-        const codesArray = Array.from(distinctCodes).sort();
+        const codesArray = Array.from(codeToMissions.keys()).sort().map(code => ({
+            code,
+            missionNames: codeToMissions.get(code)
+        }));
+
         const mappings: FactionMapping[] = configDoc?.faction_mappings || [];
 
         return res.status(200).json({ ok: true, codes: codesArray, mappings });

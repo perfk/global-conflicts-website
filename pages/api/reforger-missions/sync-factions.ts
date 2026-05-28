@@ -26,17 +26,21 @@ apiRoute.post(async (req: NextApiRequest, res: NextApiResponse) => {
     const db = (await MyMongo).db("prod");
     const missions = await db.collection("reforger_missions")
         .find({ githubPath: { $exists: true, $ne: null } })
-        .project({ _id: 1, githubPath: 1, missionId: 1, uniqueName: 1 })
+        .project({ _id: 1, githubPath: 1, missionId: 1, uniqueName: 1, worldFolder: 1 })
         .toArray();
 
     const tree = await getFullRepoTree();
     const results = { updated: 0, skipped: 0, errors: 0 };
 
     for (const mission of missions) {
-        const parts = (mission.githubPath as string).split('/');
-        if (parts.length < 3) { results.errors++; continue; }
+        let worldFolder = mission.worldFolder;
+        
+        if (!worldFolder) {
+            const parts = (mission.githubPath as string).split('/');
+            if (parts.length < 3) { results.errors++; continue; }
+            worldFolder = `worlds/${parts[1]}/${parts[2].replace('.conf', '')}`;
+        }
 
-        const worldFolder = `worlds/${parts[1]}/${parts[2].replace('.conf', '')}`;
         try {
             const factions = await extractMissionFactions(worldFolder, tree, db);
             if (factions && factions.length > 0) {

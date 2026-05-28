@@ -54,6 +54,31 @@ export default function GameplayHistoryModal({
 		return [...discordUsers].sort((a, b) => (b.leadershipCount ?? 0) - (a.leadershipCount ?? 0));
 	}, [discordUsers]);
 
+	const dynamicOutcomeOptions = React.useMemo(() => {
+		const baseOptions = [...gameplayHistoryOutcomeOptions];
+		const missionFactions = mission?.factions ?? [];
+
+		for (const faction of missionFactions) {
+			const name = faction.name;
+			if (!name) continue;
+
+			const factionVictory = `${name} Victory`;
+			const pyrrhicVictory = `Pyrrhic ${name} Victory`;
+			const majorVictory = `Major ${name} Victory`;
+
+			if (!baseOptions.find((o) => o.value === pyrrhicVictory)) {
+				baseOptions.push({ value: pyrrhicVictory, label: pyrrhicVictory });
+			}
+			if (!baseOptions.find((o) => o.value === majorVictory)) {
+				baseOptions.push({ value: majorVictory, label: majorVictory });
+			}
+			if (!baseOptions.find((o) => o.value === factionVictory)) {
+				baseOptions.push({ value: factionVictory, label: factionVictory });
+			}
+		}
+		return baseOptions;
+	}, [mission?.factions]);
+
 	const addLeader = (leader) => {
 		setListOfLeaders([...listOfLeaders, { ...leader, role: { value: "leader", label: "Leader" } }]);
 	};
@@ -398,7 +423,7 @@ export default function GameplayHistoryModal({
 									classNamePrefix="select-input"
 									menuPortalTarget={_document}
 									styles={{ menuPortal: (base) => ({ ...base, zIndex: 9999 }) }}
-									options={gameplayHistoryOutcomeOptions}
+									options={dynamicOutcomeOptions}
 									placeholder="Outcome... (Open ended)"
 									blurInputOnSelect={true}
 									onChange={setOutcome}

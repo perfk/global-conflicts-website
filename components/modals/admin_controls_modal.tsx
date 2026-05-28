@@ -22,7 +22,7 @@ interface DiscordUserOption {
 
 function FactionMapper() {
     const [isLoading, setIsLoading] = useState(true);
-    const [codes, setCodes] = useState<string[]>([]);
+    const [codes, setCodes] = useState<{ code: string; missionNames: string[] }[]>([]);
     const [savedMappings, setSavedMappings] = useState<any[]>([]);
     const [editStates, setEditStates] = useState<Record<string, { name: string; id: string; color: string }>>({});
 
@@ -35,7 +35,8 @@ function FactionMapper() {
             setSavedMappings(mappings);
 
             const map: Record<string, { name: string; id: string; color: string }> = {};
-            codeList.forEach((code: string) => {
+            codeList.forEach((item: { code: string }) => {
+                const code = item.code;
                 const existing = mappings.find((m: any) => m.code === code);
                 map[code] = existing ? { name: existing.name || "", id: existing.id || "", color: existing.color || "" } : { name: "", id: "", color: "" };
             });
@@ -74,7 +75,7 @@ function FactionMapper() {
                 {codes.length === 0 ? (
                     <div className="text-gray-500 italic">No custom factions found in any missions yet.</div>
                 ) : (
-                    codes.map(code => {
+                    codes.map(({ code, missionNames }) => {
                         const saved = savedMappings.find(m => m.code === code);
                         const currentState = editStates[code] || { name: "", id: "", color: "" };
                         const hasChanged = currentState.name !== (saved?.name || "") || 
@@ -83,7 +84,12 @@ function FactionMapper() {
 
                         return (
                             <div key={code} className="bg-white dark:bg-gray-800 p-3 rounded shadow-sm border border-gray-200 dark:border-gray-600">
-                                <div className="font-mono text-xs font-bold mb-2 break-all text-gray-800 dark:text-gray-200">{code}</div>
+                                <div className="font-mono text-xs font-bold break-all text-gray-800 dark:text-gray-200">{code}</div>
+                                {missionNames && missionNames.length > 0 && (
+                                    <div className="text-[10px] text-gray-400 mb-2 italic">
+                                        Found in: {missionNames.join(", ")}{missionNames.length >= 5 ? "..." : ""}
+                                    </div>
+                                )}
                                 <div className="flex flex-col gap-2">
                                     <input
                                         type="text"
